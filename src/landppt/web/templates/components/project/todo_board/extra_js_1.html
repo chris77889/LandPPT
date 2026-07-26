@@ -248,7 +248,7 @@
             <i class="fas fa-exclamation-triangle fa-2x" style="margin-bottom: 12px;"></i>
             <p style="margin: 0 0 8px; font-weight: 600;">大纲生成失败</p>
             <p class="outline-error-reason" style="margin: 0 0 12px; font-size: 14px; color: #7f8c8d;">原因：${lastOutlineErrorMessage}</p>
-            <button onclick="${handlerName}()" class="btn btn-warning btn-sm">
+            <button onclick="${handlerName}()" class="btn btn-outline-warning btn-sm">
                 <i class="fas fa-sync"></i> 重新生成大纲
             </button>
         `;
@@ -280,7 +280,7 @@
                 <i class="fas fa-exclamation-triangle" style="font-size: 24px; margin-bottom: 10px;"></i>
                 <div style="margin-bottom: 15px;">大纲生成失败</div>
                 <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">原因：${lastOutlineErrorMessage}</div>
-                <button onclick="${handlerName}()" class="btn btn-warning btn-sm">
+                <button onclick="${handlerName}()" class="btn btn-outline-warning btn-sm">
                     <i class="fas fa-sync"></i> 重新生成大纲
                 </button>
             </div>
@@ -779,14 +779,14 @@
                 const urlInput = document.getElementById('url_sources_todo');
 
                 if (selectedSource === 'file' && (!fileInput || fileInput.files.length === 0)) {
-                    alert('请至少选择一个文件。');
+                    Notify.warning('请至少选择一个文件。');
                     return;
                 }
 
                 if (selectedSource === 'url') {
                     const normalizedUrls = parseUrlSourcesTodo(urlInput ? urlInput.value : '');
                     if (normalizedUrls.length === 0) {
-                        alert('请至少提供一个有效 URL（http/https）。');
+                        Notify.warning('请至少提供一个有效 URL（http/https）。');
                         if (urlInput) {
                             urlInput.focus();
                             updateUrlSourcesHelper();
@@ -841,7 +841,7 @@
                     } else {
                         console.error('Requirements confirmation failed:', result.message);
 
-                        alert('需求确认失败: ' + (result.message || '未知错误'));
+                        Notify.error('需求确认失败: ' + (result.message || '未知错误'));
 
                         const requirementsSection = document.getElementById('requirements-section');
                         const outlineSection = document.getElementById('outline-section');
@@ -854,7 +854,7 @@
                     }
                 } catch (error) {
                     console.error('Error confirming requirements:', error);
-                    alert('需求确认失败: ' + error.message);
+                    Notify.error('需求确认失败: ' + error.message);
 
                     const requirementsSection = document.getElementById('requirements-section');
                     const outlineSection = document.getElementById('outline-section');
@@ -1014,51 +1014,6 @@
                             <h4 style="color: #95a5a6; margin-bottom: 15px;">大纲视图</h4>
                             <p style="margin-bottom: 20px;">大纲生成完成后，结构化内容将在这里显示</p>
                             <p style="font-size: 14px; color: #bdc3c7;">支持简洁视图和详细视图切换，可编辑大纲内容</p>
-                        </div>
-                    </div>
-                </div>
-
-
-
-                <div id="outline-edit-area" style="display: none; margin-top: 20px;">
-                    <h6 style="color: #2c3e50; margin-bottom: 15px;">
-                        <i class="fas fa-code"></i> 编辑大纲JSON
-                    </h6>
-                    <div style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 12px; color: #6c757d;">
-                        <i class="fas fa-info-circle"></i>
-                        请编辑JSON格式的大纲。确保JSON格式正确，包含title和slides数组。
-                    </div>
-                    <textarea id="outline-editor"
-                              style="width: 100%; height: 400px; padding: 15px; border: 1px solid #ddd; border-radius: 8px;
-                                     font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.4;
-                                     resize: vertical; background: #f8f9fa;"
-                              placeholder='请输入JSON格式的大纲，例如：
-{
-  "title": "PPT标题",
-  "slides": [
-    {
-      "page_number": 1,
-      "title": "页面标题",
-      "content_points": ["要点1", "要点2"],
-      "slide_type": "title"
-    }
-  ]
-}'></textarea>
-                    <div style="display: flex; gap: 8px; margin-top: 15px; justify-content: space-between;">
-                        <div style="font-size: 12px; color: #6c757d;">
-                            <i class="fas fa-lightbulb"></i>
-                            提示：slide_type可选值：title, content, agenda, thankyou
-                        </div>
-                        <div>
-                            <button onclick="validateJSON()" class="btn btn-sm btn-info" style="margin-right: 8px;">
-                                <i class="fas fa-check-circle"></i> 验证JSON
-                            </button>
-                            <button onclick="cancelEditOutlineNew()" class="btn btn-sm btn-secondary" style="margin-right: 8px;">
-                                <i class="fas fa-times"></i> 取消
-                            </button>
-                            <button onclick="saveOutlineEditNew()" class="btn btn-sm btn-primary">
-                                <i class="fas fa-save"></i> 保存修改
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -2429,166 +2384,8 @@
         }
     }
 
-    // New outline editing functions for JSON
-    function editOutlineNew() {
-        const contentDiv = document.getElementById('outline-content-display');
-        const editArea = document.getElementById('outline-edit-area');
-        const editor = document.getElementById('outline-editor');
-
-        if (contentDiv && editArea && editor) {
-            // Get current JSON content - 优先从pre元素获取
-            let jsonContent = '';
-            const preElement = contentDiv.querySelector('pre');
-            if (preElement) {
-                jsonContent = preElement.textContent || preElement.innerText || '';
-            } else {
-                // 如果没有pre元素，从整个div获取内容
-                jsonContent = contentDiv.textContent || contentDiv.innerText || '';
-            }
-
-            // Try to parse and reformat the JSON for better editing
-            try {
-                const parsed = JSON.parse(jsonContent);
-                jsonContent = JSON.stringify(parsed, null, 2);
-            } catch (e) {
-                // Keep the raw content when it is not valid JSON.
-            }
-
-            editor.value = jsonContent;
-
-            // Hide content, show editor
-            contentDiv.style.display = 'none';
-            editArea.style.display = 'block';
-        }
-    }
-
-    function cancelEditOutlineNew() {
-        const contentDiv = document.getElementById('outline-content-display');
-        const editArea = document.getElementById('outline-edit-area');
-
-        if (contentDiv && editArea) {
-            // Show content, hide editor
-            contentDiv.style.display = 'block';
-            editArea.style.display = 'none';
-        }
-    }
-
-    // JSON validation function
-    function validateJSON() {
-        const editor = document.getElementById('outline-editor');
-        if (!editor) return;
-
-        try {
-            const jsonData = JSON.parse(editor.value);
-
-            // Validate required structure
-            if (!jsonData.title) {
-                throw new Error('缺少必需字段: title');
-            }
-            if (!jsonData.slides || !Array.isArray(jsonData.slides)) {
-                throw new Error('缺少必需字段: slides (必须是数组)');
-            }
-
-            // Validate each slide
-            for (let i = 0; i < jsonData.slides.length; i++) {
-                const slide = jsonData.slides[i];
-                if (!slide.title) {
-                    throw new Error(`第${i + 1}个幻灯片缺少title字段`);
-                }
-                if (!slide.content_points || !Array.isArray(slide.content_points)) {
-                    throw new Error(`第${i + 1}个幻灯片缺少content_points字段 (必须是数组)`);
-                }
-                if (!slide.slide_type) {
-                    throw new Error(`第${i + 1}个幻灯片缺少slide_type字段`);
-                }
-            }
-
-            // Format and update editor content
-            editor.value = JSON.stringify(jsonData, null, 2);
-
-            alert('✓ JSON格式验证通过！');
-            return true;
-
-        } catch (error) {
-            alert('✕ JSON格式错误: ' + error.message);
-            return false;
-        }
-    }
-
-    async function saveOutlineEditNew() {
-        const editor = document.getElementById('outline-editor');
-        const contentDiv = document.getElementById('outline-content-display');
-
-        if (!editor || !contentDiv) return;
-
-        // Validate JSON before saving
-        if (!validateJSON()) {
-            return;
-        }
-
-        try {
-            const response = await fetch(`/projects/${currentProjectId}/update-outline`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    outline_content: editor.value
-                })
-            });
-
-            if (response.ok) {
-                // Update display content with formatted JSON - 使用textContent避免HTML转义问题
-                const preElement = document.createElement('pre');
-                preElement.style.cssText = 'margin: 0; font-family: "Consolas", "Monaco", "Courier New", monospace; font-size: 13px; white-space: pre-wrap; word-wrap: break-word;';
-                preElement.textContent = editor.value;
-                contentDiv.innerHTML = '';
-                contentDiv.appendChild(preElement);
-
-                // Hide editor, show content
-                cancelEditOutlineNew();
-
-                // Show success message
-                alert('✓ 大纲已更新');
-
-                // 立即更新大纲视图，确保使用最新的数据
-                setTimeout(() => {
-                    // 强制刷新大纲视图，使用编辑器中的最新内容
-                    try {
-                        const parsedOutline = JSON.parse(editor.value);
-
-                        // 如果当前是大纲视图，重新渲染
-                        if (currentView === 'outline') {
-                            renderOutlineView();
-                        }
-
-                        // 如果当前是新的大纲视图，强制使用最新数据重新渲染
-                        if (currentViewNew === 'outline') {
-                            // 直接传递解析后的大纲数据，避免从DOM重新读取
-                            renderOutlineViewNewWithData(parsedOutline);
-                        }
-                    } catch (parseError) {
-                        console.error('Failed to parse updated outline:', parseError);
-                        // 如果解析失败，仍然尝试常规渲染
-                        if (currentView === 'outline') {
-                            renderOutlineView();
-                        }
-                        if (currentViewNew === 'outline') {
-                            renderOutlineViewNew();
-                        }
-                    }
-                }, 100); // 减少延迟，立即更新
-            } else {
-                alert('✕ 保存失败，请重试');
-            }
-        } catch (error) {
-            console.error('Error saving outline:', error);
-            alert('✕ 保存失败: ' + error.message);
-        }
-    }
-
-    function confirmOutlineNew() {
-        if (confirm('确认大纲内容？')) {
+    async function confirmOutlineNew() {
+        if (await Notify.confirm('确认大纲内容？')) {
             // Mark outline as confirmed
             fetch(`/projects/${currentProjectId}/confirm-outline`, {
                 method: 'POST',
@@ -2606,11 +2403,11 @@
                     // Show start PPT generation button
                     showStartPPTButton();
                 } else {
-                    alert('确认失败，请重试');
+                    Notify.error('确认失败，请重试');
                 }
             }).catch(error => {
                 console.error('Error confirming outline:', error);
-                alert('确认失败: ' + error.message);
+                Notify.error('确认失败: ' + error.message);
             });
         }
     }
@@ -2655,9 +2452,9 @@
     }
 
     // Start PPT generation from outline
-    function startPPTGenerationFromOutline() {
+    async function startPPTGenerationFromOutline() {
 
-        if (confirm('确认开始生成PPT？这将跳转到模板选择页面。')) {
+        if (await Notify.confirm('确认开始生成PPT？这将跳转到模板选择页面。')) {
             // Redirect to template selection page
             window.location.href = `/projects/${currentProjectId}/template-selection`;
         }
@@ -2735,7 +2532,7 @@
                                     <i class="fas fa-exclamation-triangle" style="font-size: 24px; margin-bottom: 10px;"></i>
                                     <div style="margin-bottom: 15px;">大纲生成失败</div>
                                     <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">${data.error}</div>
-                                    <button onclick="retryStreamingOutlineGeneration()" class="btn btn-warning btn-sm">
+                                    <button onclick="retryStreamingOutlineGeneration()" class="btn btn-outline-warning btn-sm">
                                         <i class="fas fa-sync"></i> 重新生成大纲
                                     </button>
                                 </div>
@@ -2815,7 +2612,7 @@
                 <i class="fas fa-exclamation-triangle" style="font-size: 24px; margin-bottom: 10px;"></i>
                 <div style="margin-bottom: 15px;">连接失败</div>
                 <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">连接错误: ${error.message}</div>
-                <button onclick="retryStreamingOutlineGeneration()" class="btn btn-warning btn-sm">
+                <button onclick="retryStreamingOutlineGeneration()" class="btn btn-outline-warning btn-sm">
                     <i class="fas fa-sync"></i> 重新生成大纲
                 </button>
             </div>
@@ -3011,7 +2808,7 @@
         // Show confirmation dialog
         const confirmMessage = `确定要从"${getStageDisplayName(stageId)}"步骤重新开始吗？\n\n这将重置该步骤及之后的所有步骤，并重新执行工作流程。`;
 
-        if (!confirm(confirmMessage)) {
+        if (!(await Notify.confirm(confirmMessage, { danger: true }))) {
             return;
         }
 
@@ -3031,7 +2828,7 @@
                 const result = await response.json();
 
                 // Show success message
-                alert(`已从"${getStageDisplayName(stageId)}"步骤重新开始，正在重新执行工作流程...`);
+                await Notify.alert(`已从"${getStageDisplayName(stageId)}"步骤重新开始，正在重新执行工作流程...`);
 
                 // Reload page to show updated status
                 setTimeout(() => {
@@ -3043,7 +2840,7 @@
             }
         } catch (error) {
             console.error('Error continuing from stage:', error);
-            alert('重新开始失败: ' + error.message);
+            Notify.error('重新开始失败: ' + error.message);
         }
     }
 
@@ -3080,11 +2877,11 @@
                     window.location.reload();
                 }, 500);
             } else {
-                alert('更新失败，请重试');
+                Notify.error('更新失败，请重试');
             }
         } catch (error) {
             console.error('Error updating stage:', error);
-            alert('更新失败: ' + error.message);
+            Notify.error('更新失败: ' + error.message);
         }
     }
 
@@ -3785,7 +3582,7 @@
                 })
             }).then(response => {
                 if (response.ok) {
-                    alert('大纲修改成功！');
+                    Notify.success('大纲修改成功！');
                     // 关闭模态框
                     document.querySelector('.modal').remove();
 
@@ -3802,19 +3599,19 @@
                         }
                     }, 100); // 减少延迟
                 } else {
-                    alert('保存失败，请重试');
+                    Notify.error('保存失败，请重试');
                 }
             }).catch(error => {
                 console.error('Error saving outline:', error);
-                alert('保存失败: ' + error.message);
+                Notify.error('保存失败: ' + error.message);
             });
 
         } catch (error) {
             if (error instanceof SyntaxError) {
-                alert('JSON格式错误，请检查语法！');
+                Notify.error('JSON格式错误，请检查语法！');
             } else {
                 console.error('Error saving outline:', error);
-                alert('保存失败: ' + error.message);
+                Notify.error('保存失败: ' + error.message);
             }
         }
     }
@@ -3822,7 +3619,7 @@
     // 导出大纲为JSON文件
     function exportOutlineJSON() {
         if (!currentOutlineData) {
-            alert('大纲数据不存在，无法导出');
+            Notify.warning('大纲数据不存在，无法导出');
             return;
         }
 
@@ -3931,18 +3728,9 @@
 
         // 键盘事件处理
         document.addEventListener('keydown', function (event) {
-            // ESC键取消编辑
+            // ESC键关闭右键菜单
             if (event.key === 'Escape') {
-                if (document.getElementById('node-edit-modal').style.display === 'block') {
-                    cancelNodeEdit();
-                }
                 hideContextMenu();
-                clearNodeSelection();
-            }
-
-            // Enter键保存编辑
-            if (event.key === 'Enter' && document.getElementById('node-edit-modal').style.display === 'block') {
-                saveNodeEdit();
             }
         });
 
@@ -4091,7 +3879,7 @@
                 <i class="fas fa-exclamation-triangle fa-2x" style="margin-bottom: 12px;"></i>
                 <p style="margin: 0 0 8px; font-weight: 600;">大纲生成失败</p>
                 <p class="outline-error-reason" style="margin: 0 0 12px; font-size: 14px; color: #7f8c8d;">原因：${lastOutlineErrorMessage}</p>
-                <button onclick="${handlerName}()" class="btn btn-warning btn-sm">
+                <button onclick="${handlerName}()" class="btn btn-outline-warning btn-sm">
                     <i class="fas fa-sync"></i> 重新生成大纲
                 </button>
             `;
@@ -4470,7 +4258,7 @@
             });
         } catch (error) {
             console.error('Error viewing slide detail:', error);
-            alert('查看详情失败: ' + error.message);
+            Notify.error('查看详情失败: ' + error.message);
         }
     }
 
@@ -4478,7 +4266,7 @@
     function editOutlineNew() {
         const outlineContent = getOutlineContent();
         if (!outlineContent) {
-            alert('大纲数据不存在，无法编辑');
+            Notify.warning('大纲数据不存在，无法编辑');
             return;
         }
 
@@ -4538,7 +4326,7 @@
             });
 
             if (response.ok) {
-                alert('大纲修改成功！');
+                Notify.success('大纲修改成功！');
                 // 关闭模态框
                 const modal = editor.closest('.modal');
                 if (modal) modal.remove();
@@ -4560,14 +4348,14 @@
                 }, 100); // 减少延迟
             } else {
                 const error = await response.json();
-                alert('保存失败: ' + (error.detail || '未知错误'));
+                Notify.error('保存失败: ' + (error.detail || '未知错误'));
             }
         } catch (error) {
             if (error instanceof SyntaxError) {
-                alert('JSON格式错误，请检查语法！');
+                Notify.error('JSON格式错误，请检查语法！');
             } else {
                 console.error('Error saving outline:', error);
-                alert('保存失败: ' + error.message);
+                Notify.error('保存失败: ' + error.message);
             }
         }
     }
@@ -4576,7 +4364,7 @@
     function exportOutlineJSONNew() {
         const outlineContent = getOutlineContent();
         if (!outlineContent) {
-            alert('大纲数据不存在，无法导出');
+            Notify.warning('大纲数据不存在，无法导出');
             return;
         }
 
@@ -4610,7 +4398,7 @@
             }, 3000);
         } catch (error) {
             console.error('Error exporting outline:', error);
-            alert('导出失败: ' + error.message);
+            Notify.error('导出失败: ' + error.message);
         }
     }
 
@@ -4618,7 +4406,7 @@
     function editSingleSlideNew(slideIndex) {
         const outlineContent = getOutlineContentNew();
         if (!outlineContent) {
-            alert('大纲数据不存在，无法编辑');
+            Notify.warning('大纲数据不存在，无法编辑');
             return;
         }
 
@@ -4627,7 +4415,7 @@
             const slide = parsedOutline.slides[slideIndex];
 
             if (!slide) {
-                alert('幻灯片不存在');
+                Notify.warning('幻灯片不存在');
                 return;
             }
 
@@ -4656,7 +4444,7 @@
                         <input type="text" class="content-point-input" data-index="${index}"
                                value="${point.replace(/"/g, '&quot;')}"
                                style="flex: 1; padding: 8px 12px; border: 2px solid #d9d9d9; border-radius: 6px; font-size: 14px; background: #fff; color: #111;">
-                        <button class="remove-point-btn" data-remove-index="${index}"
+                        <button type="button" class="remove-point-btn" data-remove-index="${index}"
                                 style="background: #fff; color: #111; border: 1px solid #111; border-radius: 4px; padding: 6px 10px; margin-left: 8px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
                             <i class="fas fa-trash"></i>
                         </button>
@@ -4755,7 +4543,7 @@
 
         } catch (error) {
             console.error('Error editing single slide:', error);
-            alert('编辑失败: ' + error.message);
+            Notify.error('编辑失败: ' + error.message);
         }
     }
 
@@ -4781,6 +4569,7 @@
 
         // 创建删除按钮
         const button = document.createElement('button');
+        button.type = 'button';
         button.className = 'remove-point-btn';
         button.setAttribute('data-remove-index', newIndex);
         button.addEventListener('click', function () {
@@ -4858,12 +4647,12 @@
                 .filter(point => point.length > 0);
 
             if (!title) {
-                alert('页面标题不能为空');
+                Notify.warning('页面标题不能为空');
                 return;
             }
 
             if (contentPoints.length === 0) {
-                alert('至少需要一个内容要点');
+                Notify.warning('至少需要一个内容要点');
                 return;
             }
 
@@ -4946,12 +4735,12 @@
 
             } else {
                 const error = await response.json();
-                alert('保存失败: ' + (error.detail || '未知错误'));
+                Notify.error('保存失败: ' + (error.detail || '未知错误'));
             }
 
         } catch (error) {
             console.error('Error saving single slide:', error);
-            alert('保存失败: ' + error.message);
+            Notify.error('保存失败: ' + error.message);
         }
     }
 
@@ -5036,7 +4825,7 @@
         }
 
         // 显示调试信息弹窗
-        alert('调试信息已输出到控制台，请按F12查看');
+        Notify.info('调试信息已输出到控制台，请按F12查看');
     }
 
     // Convert JSON to mindmap data for new section
@@ -5178,7 +4967,7 @@
         }
     }
 
-    // 文件上传验证和预览
+    // 内容来源与URL输入初始化
     document.addEventListener('DOMContentLoaded', function () {
         const urlInput = document.getElementById('url_sources_todo');
         if (urlInput) {
@@ -5186,84 +4975,6 @@
         }
         toggleContentSourceTodo();
         updateUrlSourcesHelper();
-
-        const fileInput = document.getElementById('file_upload_todo');
-        if (fileInput) {
-            fileInput.addEventListener('change', function (e) {
-                const file = e.target.files[0];
-                const processingOptions = document.getElementById('file-processing-options-todo');
-                const pdfProcessingMode = document.getElementById('pdf-processing-mode-todo');
-
-                if (file) {
-                    // 验证文件大小 (100MB 限制)
-                    if (file.size > 100 * 1024 * 1024) {
-                        alert('文件大小不能超过 100MB');
-                        e.target.value = '';
-                        if (processingOptions) processingOptions.style.display = 'none';
-                        if (pdfProcessingMode) pdfProcessingMode.style.display = 'none';
-                        return;
-                    }
-
-                    // 验证文件类型
-                    const allowedTypes = ['.pdf', '.docx', '.txt', '.md'];
-                    const fileExt = '.' + file.name.split('.').pop().toLowerCase();
-                    if (!allowedTypes.includes(fileExt)) {
-                        alert('只支持 PDF、DOCX、TXT、MD 格式的文件');
-                        e.target.value = '';
-                        if (processingOptions) processingOptions.style.display = 'none';
-                        if (pdfProcessingMode) pdfProcessingMode.style.display = 'none';
-                        return;
-                    }
-
-                    // 显示文件处理选项（对所有文件类型）
-                    if (processingOptions) {
-                        processingOptions.style.display = 'block';
-                    }
-
-                    // 根据文件类型显示或隐藏PDF专用处理方式选项
-                    if (pdfProcessingMode) {
-                        if (fileExt === '.pdf') {
-                            pdfProcessingMode.style.display = 'block';
-                        } else {
-                            pdfProcessingMode.style.display = 'none';
-                        }
-                    }
-
-                    // 显示文件信息
-                    const fileInfo = document.createElement('div');
-                    fileInfo.style.marginTop = '10px';
-                    fileInfo.style.padding = '10px';
-                    fileInfo.style.background = '#e8f5e8';
-                    fileInfo.style.borderRadius = '5px';
-                    fileInfo.style.color = '#2d5a2d';
-                    fileInfo.innerHTML = `
-                    <strong>已选择文件：</strong>${file.name}<br>
-                    <strong>文件大小：</strong>${(file.size / 1024 / 1024).toFixed(2)} MB<br>
-                    <strong>文件类型：</strong>${fileExt.toUpperCase()}
-                `;
-
-                    // 移除现有文件信息
-                    const existingInfo = e.target.parentNode.querySelector('.file-info-todo');
-                    if (existingInfo) {
-                        existingInfo.remove();
-                    }
-
-                    fileInfo.className = 'file-info-todo';
-                    e.target.parentNode.appendChild(fileInfo);
-
-                    // 自动填充主题（如果为空）
-                    const topicInput = document.getElementById('topic');
-                    if (topicInput && !topicInput.value.trim()) {
-                        const baseName = file.name.replace(/\.[^/.]+$/, "");
-                        topicInput.value = baseName;
-                    }
-                } else {
-                    // 如果没有选择文件，隐藏处理选项
-                    if (processingOptions) processingOptions.style.display = 'none';
-                    if (pdfProcessingMode) pdfProcessingMode.style.display = 'none';
-                }
-            });
-        }
     });
 
     // 清除所有已选择的文件
@@ -5402,14 +5113,14 @@
 
                         // 验证文件大小
                         if (file.size > 100 * 1024 * 1024) {
-                            alert(`文件 "${file.name}" 大小超过100MB限制`);
+                            Notify.warning(`文件 "${file.name}" 大小超过100MB限制`);
                             hasOversizedFile = true;
                             break;
                         }
 
                         // 验证文件类型
                         if (!allowedTypes.includes(fileExt)) {
-                            alert(`文件 "${file.name}" 格式不支持\n支持的格式: ${allowedTypes.join(', ')}`);
+                            Notify.warning(`文件 "${file.name}" 格式不支持\n支持的格式: ${allowedTypes.join(', ')}`);
                             hasInvalidFile = true;
                             break;
                         }
@@ -5447,7 +5158,7 @@
 
                 if (fileRadio && fileRadio.checked && fileInput && fileInput.files.length === 0) {
                     e.preventDefault();
-                    alert('请选择要上传的文件');
+                    Notify.warning('请选择要上传的文件');
                     return false;
                 }
 
@@ -5665,7 +5376,7 @@
             .filter(point => point.length > 0);
 
         if (!title) {
-            alert('请先输入页面标题');
+            Notify.warning('请先输入页面标题');
             return;
         }
 
@@ -5800,14 +5511,14 @@
                 if (result.raw_response) {
                     console.error('AI原始响应:', result.raw_response);
                 }
-                alert('AI优化失败:\n' + errorMsg);
+                Notify.error('AI优化失败:\n' + errorMsg);
             }
 
         } catch (error) {
             console.error('AI优化失败:', error);
             const loadingToast = document.getElementById('ai-optimize-loading');
             if (loadingToast) loadingToast.remove();
-            alert('AI优化失败: ' + error.message);
+            Notify.error('AI优化失败: ' + error.message);
         }
     }
 
@@ -5815,7 +5526,7 @@
     async function aiOptimizeJSONOutlineInModal() {
         const editor = document.getElementById('outlineEditorNew');
         if (!editor || !editor.value) {
-            alert('请先输入大纲JSON内容');
+            Notify.warning('请先输入大纲JSON内容');
             return;
         }
 
@@ -5824,7 +5535,7 @@
         try {
             parsedOutline = JSON.parse(editor.value);
         } catch (e) {
-            alert('JSON格式错误，请先修正格式后再进行AI优化');
+            Notify.error('JSON格式错误，请先修正格式后再进行AI优化');
             return;
         }
 
@@ -5917,14 +5628,14 @@
                 if (result.raw_response) {
                     console.error('AI原始响应:', result.raw_response);
                 }
-                alert('AI优化失败:\n' + errorMsg);
+                Notify.error('AI优化失败:\n' + errorMsg);
             }
 
         } catch (error) {
             console.error('AI优化失败:', error);
             const loadingToast = document.getElementById('ai-optimize-loading');
             if (loadingToast) loadingToast.remove();
-            alert('AI优化失败: ' + error.message);
+            Notify.error('AI优化失败: ' + error.message);
         }
     }
 
@@ -5932,7 +5643,7 @@
     async function aiOptimizeSlideNew(slideIndex) {
         const outlineContent = getOutlineContentNew();
         if (!outlineContent) {
-            alert('大纲数据不存在，无法进行AI优化');
+            Notify.warning('大纲数据不存在，无法进行AI优化');
             return;
         }
 
@@ -5941,12 +5652,12 @@
             const slide = parsedOutline.slides[slideIndex];
 
             if (!slide) {
-                alert('幻灯片不存在');
+                Notify.warning('幻灯片不存在');
                 return;
             }
 
             // 弹出输入框让用户描述优化需求
-            const userRequest = prompt(
+            const userRequest = await Notify.prompt(
                 `AI优化 - 第${slide.page_number || slideIndex + 1}页\n\n` +
                 `当前标题: ${slide.title}\n\n` +
                 `请描述您的优化需求（例如：增加更多技术细节、简化内容、突出重点等）：`
@@ -6043,17 +5754,17 @@
                         renderOutlineViewNewWithData(parsedOutline);
                     }, 100);
                 } else {
-                    alert('保存优化结果失败');
+                    Notify.error('保存优化结果失败');
                 }
             } else {
-                alert('AI优化失败: ' + (result.error || '未知错误'));
+                Notify.error('AI优化失败: ' + (result.error || '未知错误'));
             }
 
         } catch (error) {
             console.error('AI优化失败:', error);
             const loadingToast = document.getElementById('ai-optimize-loading');
             if (loadingToast) loadingToast.remove();
-            alert('AI优化失败: ' + error.message);
+            Notify.error('AI优化失败: ' + error.message);
         }
     }
 
@@ -6061,7 +5772,7 @@
     async function aiOptimizeJSONOutline() {
         const editor = document.getElementById('outline-editor');
         if (!editor || !editor.value) {
-            alert('请先输入大纲JSON内容');
+            Notify.warning('请先输入大纲JSON内容');
             return;
         }
 
@@ -6070,12 +5781,12 @@
         try {
             parsedOutline = JSON.parse(editor.value);
         } catch (e) {
-            alert('JSON格式错误，请先修正格式后再进行AI优化');
+            Notify.error('JSON格式错误，请先修正格式后再进行AI优化');
             return;
         }
 
         // 弹出输入框让用户描述优化需求
-        const userRequest = prompt(
+        const userRequest = await Notify.prompt(
             `优化大纲\n\n` +
             `当前大纲: ${parsedOutline.title}\n` +
             `共 ${parsedOutline.slides ? parsedOutline.slides.length : 0} 页\n\n` +
@@ -6143,13 +5854,13 @@
                 }, 5000);
 
             } else {
-                alert('AI优化失败: ' + (result.error || '未知错误'));
+                Notify.error('AI优化失败: ' + (result.error || '未知错误'));
             }
 
         } catch (error) {
             console.error('AI优化失败:', error);
             const loadingToast = document.getElementById('ai-optimize-loading');
             if (loadingToast) loadingToast.remove();
-            alert('AI优化失败: ' + error.message);
+            Notify.error('AI优化失败: ' + error.message);
         }
     }

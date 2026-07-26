@@ -291,16 +291,14 @@
         }
 
         @keyframes pulse {
-            0% {
-                box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.7);
-            }
 
-            70% {
-                box-shadow: 0 0 0 10px rgba(0, 123, 255, 0);
-            }
-
+            0%,
             100% {
-                box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
             }
         }
 
@@ -489,14 +487,6 @@
             font-size: 18px;
         }
 
-        .generation-status {
-            background: var(--surface-subtle);
-            border-left: 4px solid var(--surface-contrast);
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 0 5px 5px 0;
-        }
-
         .btn-group-custom {
             display: flex;
             gap: 15px;
@@ -636,8 +626,8 @@
             }
 
             .slide-preview iframe {
-                /* 动态计算缩放比例 */
-                transform: scale(calc((100vw - 32px) / 1280));
+                /* 动态计算缩放比例（长度相除得到数值） */
+                transform: scale(calc((100vw - 32px) / 1280px));
             }
 
             .slide-header {
@@ -689,8 +679,8 @@
             }
 
             .slide-preview iframe {
-                /* 小屏幕上的缩放比例 */
-                transform: scale(calc((100vw - 24px) / 1280));
+                /* 小屏幕上的缩放比例（长度相除得到数值） */
+                transform: scale(calc((100vw - 24px) / 1280px));
             }
         }
 

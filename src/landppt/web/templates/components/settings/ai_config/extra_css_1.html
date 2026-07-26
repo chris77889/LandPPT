@@ -160,46 +160,29 @@
             }
         }
 
-        /* 提供者配置卡片样式 */
-        .provider-config-card {
-            transition: all 0.3s ease;
-        }
-
-        .provider-config-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.16);
-        }
-
-        .provider-config-card,
         #model-role-settings .card {
             overflow: visible;
             z-index: 1;
         }
 
-        .provider-config-card:focus-within,
         #model-role-settings .card:focus-within {
             z-index: 50;
         }
 
-        .provider-config-card .model-input-container,
         #model-role-settings .model-input-container {
             position: relative;
             z-index: 1;
         }
 
-        .provider-config-card .model-input-container:focus-within,
-        .provider-config-card .searchable-select-container.open,
         #model-role-settings .model-input-container:focus-within,
         #model-role-settings .searchable-select-container.open {
             z-index: 60;
         }
 
-        .provider-config-card .searchable-select-dropdown,
         #model-role-settings .searchable-select-dropdown {
             z-index: 2000;
         }
 
-        .provider-config-card .searchable-select-container.open .searchable-select-dropdown,
         #model-role-settings .searchable-select-container.open .searchable-select-dropdown {
             z-index: 3000;
         }
@@ -214,7 +197,7 @@
         }
 
         .provider-accordion-item[data-provider="openai"] .openai-setting-card:hover {
-            border-color: #bae6fd;
+            border-color: #d6d6d6;
             box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         }
 
@@ -325,169 +308,6 @@
             .provider-accordion-item[data-provider="openai"] .openai-setting-model {
                 grid-column: 1 / -1;
             }
-        }
-
-        .provider-config-form .form-group {
-            margin-bottom: 15px;
-        }
-
-        .provider-config-form .form-group label {
-            font-size: 0.9rem;
-            font-weight: 600;
-            margin-bottom: 5px;
-        }
-
-        .provider-config-form .form-group input,
-        .provider-config-form .form-group select {
-            padding: 10px 15px;
-            font-size: 0.9rem;
-        }
-
-        .provider-config-form .form-group small {
-            display: block;
-            margin-top: 5px;
-            font-size: 0.8rem;
-            line-height: 1.4;
-        }
-
-
-
-        /* 状态指示器 */
-        .status-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.8em;
-            font-weight: 600;
-        }
-
-        .status-available {
-            background: #111;
-            color: #fff;
-            border: 1px solid #111;
-        }
-
-        .status-unavailable {
-            background: #e0e0e0;
-            color: #111111;
-            border: 1px solid #c4c4c4;
-        }
-
-        .status-label--ok {
-            background: #111;
-            color: #fff;
-            border: 1px solid #111;
-        }
-
-        .status-label--err {
-            background: #e0e0e0;
-            color: #111111;
-            border: 1px solid #c4c4c4;
-        }
-
-        /* 现代化单选框样式 */
-        .custom-radio {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-left: 10px;
-        }
-
-        .custom-radio input[type="radio"] {
-            appearance: none;
-            -webkit-appearance: none;
-            width: 22px;
-            height: 22px;
-            border: 2px solid #d3d3d3;
-            border-radius: 50%;
-            position: relative;
-            cursor: pointer;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            background: white;
-            flex-shrink: 0;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-
-        .custom-radio input[type="radio"]:hover {
-            border-color: #0f0f0f;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-            transform: translateY(-1px) scale(1.05);
-        }
-
-        .custom-radio input[type="radio"]:focus {
-            outline: none;
-            border-color: #0f0f0f;
-            box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.12);
-        }
-
-        .custom-radio input[type="radio"]:checked {
-            border-color: #0f0f0f;
-            background: linear-gradient(135deg, #0f0f0f 0%, #2a2a2a 100%);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
-        }
-
-        .custom-radio input[type="radio"]:checked::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: white;
-            opacity: 1;
-            animation: radiomark 0.3s ease-in-out;
-        }
-
-        @keyframes radiomark {
-            0% {
-                opacity: 0;
-                transform: translate(-50%, -50%) scale(0);
-            }
-
-            50% {
-                opacity: 1;
-                transform: translate(-50%, -50%) scale(1.3);
-            }
-
-            100% {
-                opacity: 1;
-                transform: translate(-50%, -50%) scale(1);
-            }
-        }
-
-        .custom-radio .radio-label {
-            font-size: 0.9em;
-            color: #495057;
-            font-weight: 600;
-            cursor: pointer;
-            transition: color 0.3s ease;
-            user-select: none;
-        }
-
-        .custom-radio input[type="radio"]:checked+.radio-label {
-            color: #0f0f0f;
-        }
-
-        /* 单选框禁用状态 */
-        .custom-radio input[type="radio"]:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            background: #f8f9fa;
-            border-color: #e9ecef;
-        }
-
-        .custom-radio input[type="radio"]:disabled:hover {
-            transform: none;
-            box-shadow: none;
-        }
-
-        .custom-radio input[type="radio"]:disabled+.radio-label {
-            opacity: 0.5;
-            cursor: not-allowed;
         }
 
         /* 现代化复选框样式 */
@@ -762,17 +582,6 @@
             border-color: #333;
         }
 
-        .btn-success {
-            background: #111;
-            color: #fff;
-            border: 1px solid #111;
-        }
-
-        .btn-success:hover {
-            background: #333;
-            border-color: #333;
-        }
-
         .btn-secondary {
             background: #fff;
             color: var(--text-primary);
@@ -1019,63 +828,6 @@
             display: block;
         }
 
-        /* 输入框与滑块组合样式 */
-        .input-with-range {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .input-with-range input[type="number"] {
-            margin-bottom: 0 !important;
-        }
-
-        .input-with-range input[type="range"] {
-            height: 6px;
-            border-radius: 3px;
-            background: #e5e5e5;
-            outline: none;
-            transition: all 0.3s ease;
-        }
-
-        .input-with-range input[type="range"]:hover {
-            background: #dcdcdc;
-        }
-
-        .input-with-range input[type="range"]::-webkit-slider-thumb {
-            appearance: none;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: #0f0f0f;
-            cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-            transition: all 0.3s ease;
-        }
-
-        .input-with-range input[type="range"]::-webkit-slider-thumb:hover {
-            background: #2a2a2a;
-            transform: scale(1.1);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-        }
-
-        .input-with-range input[type="range"]::-moz-range-thumb {
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: #0f0f0f;
-            cursor: pointer;
-            border: none;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-            transition: all 0.3s ease;
-        }
-
-        .input-with-range input[type="range"]::-moz-range-thumb:hover {
-            background: #2a2a2a;
-            transform: scale(1.1);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-        }
-
         /* 开关样式复选框 (用于主要的启用/禁用选项) */
         .toggle-switch {
             position: relative;
@@ -1218,19 +970,11 @@
                 padding: 16px;
             }
 
-            /* 复选框和单选框响应式 */
-            .form-group input[type="checkbox"],
-            .custom-radio input[type="radio"] {
+            /* 复选框响应式 */
+            .form-group input[type="checkbox"] {
                 width: 18px;
                 height: 18px;
             }
-
-            .custom-radio input[type="radio"]:checked::after {
-                width: 8px;
-                height: 8px;
-            }
-
-
 
             /* 生成参数页面响应式 */
             #generation-params div[style*="grid-template-columns"] {
@@ -1239,20 +983,6 @@
 
             #generation-params .form-group {
                 margin-bottom: 25px;
-            }
-
-            .input-with-range {
-                gap: 6px;
-            }
-
-            .input-with-range input[type="range"]::-webkit-slider-thumb {
-                width: 16px;
-                height: 16px;
-            }
-
-            .input-with-range input[type="range"]::-moz-range-thumb {
-                width: 16px;
-                height: 16px;
             }
         }
 

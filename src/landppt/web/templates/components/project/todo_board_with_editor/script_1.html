@@ -72,7 +72,10 @@
         }
 
         // 初始化自由模板预览缩放
+        let freeTemplatePreviewResizeInitDone = false;
         function initFreeTemplatePreviewResize() {
+            if (freeTemplatePreviewResizeInitDone) return;
+            freeTemplatePreviewResizeInitDone = true;
             updateFreeTemplatePreviewScale();
 
             // 监听窗口大小变化
@@ -226,7 +229,10 @@
         }
 
         // 初始化模板调整功能
+        let freeTemplateAdjustmentInitDone = false;
         function initFreeTemplateAdjustment() {
+            if (freeTemplateAdjustmentInitDone) return;
+            freeTemplateAdjustmentInitDone = true;
             const adjustInput = document.getElementById('freeTemplateAdjustInput');
             const adjustBtn = document.getElementById('freeTemplateAdjustBtn');
 
@@ -327,18 +333,6 @@
                 if (regenerateBtn) regenerateBtn.disabled = false;
             }
         }
-
-        // 添加脉冲动画样式
-        (function () {
-            const style = document.createElement('style');
-            style.textContent = `
-                @keyframes pulse {
-                    0%, 100% { opacity: 1; transform: scale(1); }
-                    50% { opacity: 0.6; transform: scale(1.1); }
-                }
-            `;
-            document.head.appendChild(style);
-        })();
 
         function setFreeTemplateStatus(text) {
             const el = document.getElementById('freeTemplateStatus');
@@ -547,7 +541,7 @@
             return new Promise(async (resolve) => {
                 if (!freeTemplateModalInstance) initFreeTemplateWizard();
                 if (!freeTemplateModalInstance) {
-                    alert('无法打开自由模板对话框');
+                    Notify.error('无法打开自由模板对话框');
                     resolve(false);
                     return;
                 }
@@ -702,7 +696,7 @@
 
             } catch (e) {
                 // 如果检测失败，询问用户
-                if (confirm('无法检测模板类型，是否继续生成？')) {
+                if (await Notify.confirm('无法检测模板类型，是否继续生成？')) {
                     return true;
                 }
                 return false;
@@ -724,7 +718,7 @@
             return new Promise(async (resolve) => {
                 if (!freeTemplateModalInstance) initFreeTemplateWizard();
                 if (!freeTemplateModalInstance) {
-                    alert('无法打开自由模板对话框');
+                    Notify.error('无法打开自由模板对话框');
                     resolve(false);
                     return;
                 }
@@ -881,7 +875,7 @@
                         return;
                     }
                 } catch (e) {
-                    alert('自由模板准备失败：' + (e && e.message ? e.message : e));
+                    Notify.error('自由模板准备失败：' + (e && e.message ? e.message : e));
                     return;
                 }
 
@@ -912,7 +906,7 @@
                             const templateName = templateData.template ? templateData.template.template_name : '无';
 
                             // 未检测到用户选择的全局模板ID，跳转到模板选择页面
-                            if (confirm('检测到您还未选择全局模板，需要先选择模板才能开始生成PPT。是否跳转到模板选择页面？')) {
+                            if (await Notify.confirm('检测到您还未选择全局模板，需要先选择模板才能开始生成PPT。是否跳转到模板选择页面？')) {
                                 window.location.href = `/projects/{{ todo_board.task_id }}/template-selection`;
                                 return;
                             } else {
@@ -922,7 +916,7 @@
                     }
                 } catch (error) {
                     // 如果检查失败，询问用户是否继续
-                    if (!confirm('无法检查全局模板设置，是否继续生成PPT？')) {
+                    if (!(await Notify.confirm('无法检查全局模板设置，是否继续生成PPT？'))) {
                         return;
                     }
                 }
@@ -1279,7 +1273,7 @@
         }
 
         // 停止生成（带确认对话框）
-        function stopGeneration() {
+        async function stopGeneration() {
             // 弹出确认对话框
             const completedCount = getCompletedSlidesCount();
             const totalSlides = estimateTotalSlides();
@@ -1289,7 +1283,7 @@
                 confirmMessage = `已生成 ${completedCount}${totalSlides ? '/' + totalSlides : ''} 页。确定要停止生成吗？\n\n已生成的幻灯片将被保留，您可以稍后继续生成。`;
             }
 
-            if (!confirm(confirmMessage)) {
+            if (!(await Notify.confirm(confirmMessage))) {
                 return; // 用户取消停止
             }
 
@@ -1504,7 +1498,7 @@
             statusMessage.innerHTML = message;
 
             const statusDiv = document.getElementById('generationStatus');
-            statusDiv.className = 'generation-status';
+            statusDiv.className = 'status-indicator';
 
             if (type === 'error') {
                 statusDiv.style.borderLeftColor = 'var(--surface-contrast)';

@@ -1,7 +1,7 @@
 <!-- 页面头部美化 -->
 
-<div
-    style="background: var(--glass-bg); color: var(--text-primary); padding: 40px 0; margin: -20px -20px 30px -20px; text-align: center; position: relative; overflow: hidden; border-bottom: 1px solid var(--glass-border);">
+<div class="todo-hero-band"
+    style="background: var(--glass-bg); color: var(--text-primary); padding: 40px 0; text-align: center; position: relative; overflow: hidden; border-bottom: 1px solid var(--glass-border);">
     <div style="position: relative; z-index: 1;">
         <h2 style="font-size: 2em; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.01em;">{{ todo_board.title
             }}</h2>
@@ -298,10 +298,6 @@
 
     .btn {
         transition: all 0.3s ease;
-    }
-
-    .btn:hover {
-        transform: translateY(-1px);
     }
 
     .btn-stream:hover {

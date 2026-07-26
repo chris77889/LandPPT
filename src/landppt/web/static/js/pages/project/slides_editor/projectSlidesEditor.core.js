@@ -684,11 +684,9 @@ function navigatePreviewSlide(direction) {
         thumbnails.forEach((thumb, i) => {
             if (i === newIndex) {
                 thumb.classList.add('active');
-                thumb.classList.add('selected');  // 添加选中状态（对勾）
                 thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             } else {
                 thumb.classList.remove('active');
-                thumb.classList.remove('selected');  // 移除选中状态（对勾）
             }
         });
 

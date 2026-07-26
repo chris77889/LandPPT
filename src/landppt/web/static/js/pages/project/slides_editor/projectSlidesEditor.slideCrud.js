@@ -318,11 +318,11 @@ async function insertNewSlide() {
 
         const slideTitle = `第${contextMenuSlideIndex + 2}页`;
         let htmlContent = `
-            <div style="width: 1280px; height: 720px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            <div style="width: 1280px; height: 720px; background: #ffffff;
                         display: flex; flex-direction: column; justify-content: center; align-items: center;
-                        color: white; font-family: 'Microsoft YaHei', Arial, sans-serif;">
+                        color: #111111; font-family: 'Microsoft YaHei', Arial, sans-serif;">
                 <h1 style="font-size: 48px; margin-bottom: 20px; text-align: center;">新建幻灯片</h1>
-                <p style="font-size: 24px; text-align: center;">请编辑此幻灯片内容</p>
+                <p style="font-size: 24px; text-align: center; color: #6b7078;">请编辑此幻灯片内容</p>
             </div>
         `;
 
@@ -417,7 +417,7 @@ async function deleteSlide() {
         return;
     }
 
-    if (confirm('确定要删除这张幻灯片吗？')) {
+    if (await Notify.confirm('确定要删除这张幻灯片吗？', { danger: true })) {
         try {
             // 删除幻灯片
             slidesData.splice(contextMenuSlideIndex, 1);

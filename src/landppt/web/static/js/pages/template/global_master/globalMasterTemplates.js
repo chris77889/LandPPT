@@ -28,6 +28,7 @@ const previewCache = new Map();
 let previewObserver;
 let tagsLoaded = false;
 let isExportingTemplatePptx = false;
+let aiGenerationSeq = 0;
 
 const uploadApi = createGlobalMasterTemplatesUpload({ state, apiClient, formatBytes, loadTemplates });
 
@@ -80,7 +81,10 @@ function bindEvents() {
     document.getElementById('closePreviewModal')?.addEventListener('click', closePreviewModal);
     document.getElementById('cancelBtn')?.addEventListener('click', closeTemplateModal);
     document.getElementById('cancelAIBtn')?.addEventListener('click', closeAIGenerationModal);
-    document.getElementById('cancelGenerationBtn')?.addEventListener('click', showAIGenerationForm);
+    document.getElementById('cancelGenerationBtn')?.addEventListener('click', () => {
+        aiGenerationSeq += 1; // 使进行中的生成请求结果失效
+        showAIGenerationForm();
+    });
     document.getElementById('closeCompletionBtn')?.addEventListener('click', () => {
         closeAIGenerationModal();
         loadTemplates(1);
@@ -132,6 +136,8 @@ function bindEvents() {
             event.target.style.display = 'none';
         }
     });
+
+    window.addEventListener('resize', resizePreviewFrame);
 }
 
 async function loadTemplates(page = 1) {
@@ -180,7 +186,7 @@ async function loadTemplates(page = 1) {
         emit('templates:loaded', { count: state.templates.length, page: state.currentPage });
     } catch (error) {
         console.error('Error loading templates:', error);
-        alert('加载模板失败: ' + error.message);
+        Notify.error('加载模板失败: ' + error.message);
     } finally {
         showLoading(false);
     }
@@ -441,7 +447,7 @@ async function loadTemplateForEdit(templateId) {
         document.getElementById('isDefault').checked = Boolean(template.is_default);
         document.getElementById('htmlTemplate').value = template.html_template || '';
     } catch (error) {
-        alert('加载模板失败: ' + error.message);
+        Notify.error('加载模板失败: ' + error.message);
     }
 }
 
@@ -472,14 +478,14 @@ async function handleTemplateSubmit(event) {
         closeTemplateModal();
         loadTemplates(state.editingTemplateId ? state.currentPage : 1);
     } catch (error) {
-        alert('保存失败: ' + error.message);
+        Notify.error('保存失败: ' + error.message);
     }
 }
 
 function previewCurrentTemplate() {
     const htmlTemplate = document.getElementById('htmlTemplate')?.value;
     if (!htmlTemplate) {
-        alert('请先输入HTML模板内容');
+        Notify.warning('请先输入HTML模板内容');
         return;
     }
     showPreview(htmlTemplate);
@@ -502,6 +508,7 @@ function showAIGenerationForm() {
 }
 
 function closeAIGenerationModal() {
+    aiGenerationSeq += 1; // 使进行中的生成请求结果失效
     dom.aiModal.style.display = 'none';
     state.generatedTemplate = null;
     uploadApi.clearUploadedImage();
@@ -521,7 +528,7 @@ async function handleAIGeneration(event) {
 
     if (payload.generation_mode === 'pptx_extract') {
         if (!state.uploadedPptx) {
-            alert('请上传 PPTX 文件后再生成');
+            Notify.warning('请上传 PPTX 文件后再生成');
             return;
         }
         payload.reference_pptx = { ...state.uploadedPptx };
@@ -531,7 +538,7 @@ async function handleAIGeneration(event) {
             ? state.uploadedImages
             : (state.uploadedImage ? [state.uploadedImage] : []);
         if (images.length === 0) {
-            alert('请上传参考图片后再生成');
+            Notify.warning('请上传参考图片后再生成');
             return;
         }
         payload.reference_images = images.map(img => ({ ...img }));
@@ -539,17 +546,21 @@ async function handleAIGeneration(event) {
         payload.reference_image = { ...images[0] };
     }
 
+    const generationToken = ++aiGenerationSeq;
+
     try {
         dom.aiFormContainer.style.display = 'none';
         dom.aiGenerationProgress.style.display = 'block';
         updateStatusText('正在请求AI生成...');
 
         const result = await apiClient.post('/api/global-master-templates/generate', payload);
+        if (generationToken !== aiGenerationSeq) return; // 已取消或已重新提交，忽略过期结果
         const templateData = normalizeTemplateData(result);
         await handleGenerationComplete(templateData);
         updateStatusText('模板生成完成');
         showAIGenerationComplete();
     } catch (error) {
+        if (generationToken !== aiGenerationSeq) return;
         console.error('生成失败', error);
         showAIGenerationError(error.message);
     }
@@ -648,32 +659,32 @@ function showAIGenerationComplete() {
 function showAIGenerationError(message) {
     dom.aiGenerationProgress.style.display = 'none';
     dom.aiFormContainer.style.display = 'block';
-    alert('AI生成失败: ' + message);
+    Notify.error('AI生成失败: ' + message);
 }
 
 async function saveGeneratedTemplate() {
     if (!state.generatedTemplate) {
-        alert('没有可保存的模板');
+        Notify.warning('没有可保存的模板');
         return;
     }
     try {
         await apiClient.post('/api/global-master-templates/save-generated', state.generatedTemplate);
-        alert('模板已保存');
+        Notify.success('模板已保存');
         closeAIGenerationModal();
         loadTemplates(1);
     } catch (error) {
-        alert('保存失败: ' + error.message);
+        Notify.error('保存失败: ' + error.message);
     }
 }
 
 async function adjustTemplate() {
     if (!state.generatedTemplate) {
-        alert('请先生成模板');
+        Notify.warning('请先生成模板');
         return;
     }
     const adjustment = dom.adjustmentInput.value.trim();
     if (!adjustment) {
-        alert('请输入调整意见');
+        Notify.warning('请输入调整意见');
         return;
     }
     try {
@@ -687,7 +698,7 @@ async function adjustTemplate() {
         renderGeneratedPreview(templateData.html_template);
         renderLLMResponse(templateData.raw_response || templateData.llm_response || templateData.html_template);
     } catch (error) {
-        alert('调整失败: ' + error.message);
+        Notify.error('调整失败: ' + error.message);
     } finally {
         dom.adjustmentProgress.style.display = 'none';
     }
@@ -698,7 +709,7 @@ async function previewTemplateById(templateId) {
         const data = await apiClient.get(`/api/global-master-templates/${templateId}/preview`);
         showPreview(data.html_template || data);
     } catch (error) {
-        alert('预览加载失败: ' + error.message);
+        Notify.error('预览加载失败: ' + error.message);
     }
 }
 
@@ -706,6 +717,14 @@ function showPreview(htmlContent) {
     if (!dom.previewFrame) return;
     setIframeContent(dom.previewFrame, htmlContent || '<div style="padding:20px;">暂无预览内容</div>');
     dom.previewModal.style.display = 'flex';
+    resizePreviewFrame();
+}
+
+function resizePreviewFrame() {
+    const wrap = document.getElementById('previewFrameWrap');
+    if (!wrap || !dom.previewFrame) return;
+    const scale = wrap.clientWidth / 1280;
+    dom.previewFrame.style.transform = `scale(${scale})`;
 }
 
 function closePreviewModal() {
@@ -713,37 +732,37 @@ function closePreviewModal() {
 }
 
 async function duplicateTemplate(templateId) {
-    const newName = prompt('请输入新模板名称:');
+    const newName = await Notify.prompt('请输入新模板名称:');
     if (!newName) return;
     try {
         await apiClient.post(`/api/global-master-templates/${templateId}/duplicate?new_name=${encodeURIComponent(newName.trim())}`);
         loadTemplates(state.currentPage);
         emit('templates:updated', { action: 'duplicate', id: templateId });
     } catch (error) {
-        alert('复制失败: ' + error.message);
+        Notify.error('复制失败: ' + error.message);
     }
 }
 
 async function setDefaultTemplate(templateId) {
-    if (!confirm('确认将此模板设为默认吗？')) return;
+    if (!(await Notify.confirm('确认将此模板设为默认吗？'))) return;
     try {
         await apiClient.post(`/api/global-master-templates/${templateId}/set-default`);
         loadTemplates(state.currentPage);
         emit('templates:updated', { action: 'set-default', id: templateId });
     } catch (error) {
-        alert('设置默认失败: ' + error.message);
+        Notify.error('设置默认失败: ' + error.message);
     }
 }
 
 async function deleteTemplate(templateId) {
-    if (!confirm('确认删除该模板？')) return;
+    if (!(await Notify.confirm('确认删除该模板？', { danger: true }))) return;
     try {
         await apiClient.del(`/api/global-master-templates/${templateId}`);
         const shouldGoPrev = state.templates.length === 1 && state.currentPage > 1;
         loadTemplates(shouldGoPrev ? state.currentPage - 1 : state.currentPage);
         emit('templates:updated', { action: 'delete', id: templateId });
     } catch (error) {
-        alert('删除失败: ' + error.message);
+        Notify.error('删除失败: ' + error.message);
     }
 }
 
@@ -771,13 +790,13 @@ async function exportTemplate(templateId) {
         document.body.removeChild(link);
         setTimeout(() => URL.revokeObjectURL(link.href), 500);
     } catch (error) {
-        alert('导出失败: ' + error.message);
+        Notify.error('导出失败: ' + error.message);
     }
 }
 
 async function exportTemplateAsPptxTemplate(templateId, triggerButton = null) {
     if (isExportingTemplatePptx) {
-        alert('已有PPTX模板导出任务进行中，请稍候');
+        Notify.warning('已有PPTX模板导出任务进行中，请稍候');
         return;
     }
 
@@ -857,10 +876,10 @@ async function exportTemplateAsPptxTemplate(templateId, triggerButton = null) {
             slideNotes
         });
 
-        alert('PPTX模板导出完成');
+        Notify.success('PPTX模板导出完成');
     } catch (error) {
         console.error('导出PPTX模板失败:', error);
-        alert('导出PPTX模板失败: ' + (error?.message || '未知错误'));
+        Notify.error('导出PPTX模板失败: ' + (error?.message || '未知错误'));
     } finally {
         if (renderHost && renderHost.parentNode) {
             renderHost.parentNode.removeChild(renderHost);
@@ -878,12 +897,11 @@ function updateStatusText(text) {
 
 function toggleLLMResponse() {
     if (!dom.llmResponseContainer) return;
-    const btn = document.getElementById('toggleLLMResponseBtn');
     const isHidden = dom.llmResponseContainer.style.display === 'none';
     dom.llmResponseContainer.style.display = isHidden ? 'block' : 'none';
-    if (btn) {
-        btn.textContent = isHidden ? '收起完整响应' : '查看完整响应';
-        btn.classList.toggle('btn-outline-info', !isHidden);
+    const label = document.getElementById('toggleLLMResponseBtn')?.querySelector('.btn-label');
+    if (label) {
+        label.textContent = isHidden ? '收起响应' : '查看响应';
     }
 }
 
@@ -891,13 +909,13 @@ function copyLLMResponse() {
     if (!dom.rawResponseCode) return;
     const text = dom.rawResponseCode.textContent || '';
     navigator.clipboard.writeText(text).then(() => {
-        const btn = document.getElementById('copyResponseBtn');
-        if (btn) {
-            const original = btn.textContent;
-            btn.textContent = '已复制';
-            setTimeout(() => { btn.textContent = original; }, 1500);
+        const label = document.getElementById('copyResponseBtn')?.querySelector('.btn-label');
+        if (label) {
+            const original = label.textContent;
+            label.textContent = '已复制';
+            setTimeout(() => { label.textContent = original; }, 1500);
         }
-    }).catch(() => alert('复制失败，请手动复制'));
+    }).catch(() => Notify.error('复制失败，请手动复制'));
 }
 
 function updatePagination() {

@@ -18,20 +18,20 @@
     console.log('Extracted project ID:', projectId);
 
     // Initialize page
-    document.addEventListener('DOMContentLoaded', function () {
+    document.addEventListener('DOMContentLoaded', async function () {
         console.log('Current URL:', window.location.pathname);
         console.log('Path parts:', pathParts);
         console.log('Project ID:', projectId);
 
         // Validate project ID format
         if (!projectId || projectId === 'undefined' || projectId === 'projects') {
-            alert('错误：无法获取项目ID。当前路径：' + window.location.pathname + '\n\n请确保URL格式正确：/projects/{项目ID}/template-selection');
+            Notify.error('错误：无法获取项目ID。当前路径：' + window.location.pathname + '\n\n请确保URL格式正确：/projects/{项目ID}/template-selection');
             return;
         }
 
         // Additional validation for common invalid project IDs
         if (['template-selection', 'todo', 'edit', 'preview', 'fullscreen'].includes(projectId)) {
-            alert('错误：项目ID格式无效 (' + projectId + ')。\n\n请从项目列表页面正确访问模板选择页面。');
+            await Notify.alert('错误：项目ID格式无效 (' + projectId + ')。\n\n请从项目列表页面正确访问模板选择页面。');
             window.location.href = '/projects';
             return;
         }
@@ -160,7 +160,7 @@
 
         } catch (error) {
             console.error('Error loading templates:', error);
-            alert('加载模板失败: ' + error.message);
+            Notify.error('加载模板失败: ' + error.message);
         } finally {
             showLoading(false);
         }
@@ -248,7 +248,7 @@
     function renderFreeTemplateCard() {
         return `
         <div class="template-card free-template-card" data-template-mode="free" onclick="selectFreeTemplate()">
-            <div class="template-preview" style="display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, rgba(102,126,234,0.12) 0%, rgba(67,233,123,0.12) 100%);">
+            <div class="template-preview" style="display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);">
                 <div style="text-align: center; padding: 18px;">
                     <div style="font-size: 3rem; line-height: 1; margin-bottom: 10px;">✨</div>
                     <div style="font-size: 18px; font-weight: 700; color: #2c3e50;">自由模板</div>
@@ -261,7 +261,7 @@
             <div class="template-info">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
                     <h4 style="font-size: 16px; font-weight: 600; color: #2c3e50; margin: 0; line-height: 1.3;">自由模板（AI决定）</h4>
-                    <span class="default-badge" style="background: var(--primary-gradient);">NEW</span>
+                    <span class="default-badge">NEW</span>
                 </div>
                 <p style="color: #666; font-size: 14px; line-height: 1.4; margin: 0 0 12px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
                     不从模板库中选择，AI 将根据你的大纲自动生成专属模板，并用于后续页面生成。
@@ -387,7 +387,7 @@
             showPreview(data.html_template, data.template_name);
         } catch (error) {
             console.error('Error loading template preview:', error);
-            alert('加载预览失败: ' + error.message);
+            Notify.error('加载预览失败: ' + error.message);
         }
     }
 
@@ -404,12 +404,24 @@
 
         frame.src = url;
         modal.style.display = 'flex';
+        resizePreviewFrame();
 
         // Clean up the blob URL after a delay
         setTimeout(() => {
             URL.revokeObjectURL(url);
         }, 1000);
     }
+
+    // 按容器宽度缩放 1280x720 的预览 iframe，避免小屏被裁剪
+    function resizePreviewFrame() {
+        const wrap = document.getElementById('previewFrameWrap');
+        const frame = document.getElementById('previewFrame');
+        if (!wrap || !frame) return;
+        const scale = wrap.clientWidth / 1280;
+        frame.style.transform = `scale(${scale})`;
+    }
+
+    window.addEventListener('resize', resizePreviewFrame);
 
     function closePreviewModal() {
         document.getElementById('previewModal').style.display = 'none';
@@ -427,6 +439,26 @@
         return `/projects/${projectId}/todo-editor?auto_start=true`;
     }
 
+    // 提交期间禁用底部操作按钮并显示加载文案，防止重复提交
+    function setActionButtonsBusy(busy) {
+        [document.getElementById('startGenerationBtn'), document.getElementById('skipSelectionBtn')].forEach(btn => {
+            if (!btn) return;
+            if (busy) {
+                if (!btn.dataset.originalLabel) {
+                    btn.dataset.originalLabel = btn.innerHTML;
+                }
+                btn.dataset.wasDisabled = btn.disabled ? '1' : '';
+                btn.disabled = true;
+                btn.innerHTML = '⏳ 正在提交…';
+            } else {
+                btn.disabled = btn.dataset.wasDisabled === '1';
+                if (btn.dataset.originalLabel) {
+                    btn.innerHTML = btn.dataset.originalLabel;
+                }
+            }
+        });
+    }
+
     async function startPPTGeneration() {
         console.log('startPPTGeneration called');
         console.log('selectedTemplateId:', selectedTemplateId);
@@ -434,14 +466,16 @@
         console.log('projectId:', projectId);
 
         if (selectedTemplateMode !== 'free' && !selectedTemplateId) {
-            alert('请先选择一个模板');
+            Notify.warning('请先选择一个模板');
             return;
         }
 
         if (!projectId || projectId === 'undefined') {
-            alert('错误：项目ID无效');
+            Notify.error('错误：项目ID无效');
             return;
         }
+
+        setActionButtonsBusy(true);
 
         try {
             console.log('Sending request to select template...');
@@ -483,7 +517,8 @@
 
         } catch (error) {
             console.error('Error starting PPT generation:', error);
-            alert('开始生成失败: ' + error.message);
+            setActionButtonsBusy(false);
+            Notify.error('开始生成失败: ' + error.message);
         }
     }
 
@@ -492,9 +527,11 @@
         console.log('projectId:', projectId);
 
         if (!projectId || projectId === 'undefined') {
-            alert('错误：项目ID无效');
+            Notify.error('错误：项目ID无效');
             return;
         }
+
+        setActionButtonsBusy(true);
 
         try {
             console.log('Sending request to use default template...');
@@ -536,7 +573,8 @@
 
         } catch (error) {
             console.error('Error using default template:', error);
-            alert('使用默认模板失败: ' + error.message);
+            setActionButtonsBusy(false);
+            Notify.error('使用默认模板失败: ' + error.message);
         }
     }
 

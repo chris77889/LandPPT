@@ -173,8 +173,8 @@ function validateCurrentSlideIndex(functionName = 'unknown') {
 }
 
 // 清除AI对话上下文
-function clearAIContext() {
-    if (confirm('确定要清除当前幻灯片的对话上下文吗？这将删除当前幻灯片的所有对话记录。')) {
+async function clearAIContext() {
+    if (await Notify.confirm('确定要清除当前幻灯片的对话上下文吗？这将删除当前幻灯片的所有对话记录。', { danger: true })) {
         clearAIMessages();
         showNotification('对话上下文已清除', 'info');
     }
@@ -474,19 +474,19 @@ async function generateSlideWithGlobalTemplate(template, title, content) {
     } catch (error) {
         // 返回默认的HTML内容
         return `
-            <div style="width: 1280px; height: 720px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            <div style="width: 1280px; height: 720px; background: #ffffff;
                         display: flex; flex-direction: column; justify-content: center; align-items: center;
-                        color: white; font-family: 'Microsoft YaHei', Arial, sans-serif;">
+                        color: #111111; font-family: 'Microsoft YaHei', Arial, sans-serif;">
                 <h1 style="font-size: 48px; margin-bottom: 20px; text-align: center;">${title}</h1>
-                <p style="font-size: 24px; text-align: center;">${content}</p>
+                <p style="font-size: 24px; text-align: center; color: #6b7078;">${content}</p>
             </div>
         `;
     }
 }
 
 // 根据大纲重新生成幻灯片
-function regenerateFromOutline() {
-    if (confirm('确定要根据当前大纲重新生成这张幻灯片吗？这将覆盖现有内容。')) {
+async function regenerateFromOutline() {
+    if (await Notify.confirm('确定要根据当前大纲重新生成这张幻灯片吗？这将覆盖现有内容。', { danger: true })) {
         // 先保存大纲
         saveSlideOutline();
 

@@ -425,8 +425,8 @@
         /* 响应式设计 */
         @media (max-width: 768px) {
             .slide-display {
-                width: 95vw;
-                height: 95vh;
+                width: min(95vw, calc(95vh * 16 / 9));
+                height: auto;
             }
 
             .presentation-controls {
@@ -628,4 +628,3 @@
         .narration-subtitle.show {
             opacity: 1;
         }
-    </style>

@@ -403,61 +403,8 @@ async function downloadHTML() {
 }
 
 function showNotification(message, type = 'info') {
-    // 创建通知元素
-    const notification = document.createElement('div');
-    notification.className = `notification notification-${type}`;
-    notification.textContent = message;
-
-    // 添加样式
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        padding: 12px 20px;
-        border-radius: 6px;
-        color: white;
-        font-weight: 500;
-        z-index: 10000;
-        opacity: 0;
-        transform: translateX(100%);
-        transition: all 0.3s ease;
-    `;
-
-    // 根据类型设置背景色
-    switch (type) {
-        case 'success':
-            notification.style.backgroundColor = '#28a745';
-            break;
-        case 'error':
-            notification.style.backgroundColor = '#dc3545';
-            break;
-        case 'warning':
-            notification.style.backgroundColor = '#ffc107';
-            notification.style.color = '#212529';
-            break;
-        default:
-            notification.style.backgroundColor = '#007bff';
-    }
-
-    // 添加到页面
-    document.body.appendChild(notification);
-
-    // 显示动画
-    setTimeout(() => {
-        notification.style.opacity = '1';
-        notification.style.transform = 'translateX(0)';
-    }, 100);
-
-    // 自动隐藏
-    setTimeout(() => {
-        notification.style.opacity = '0';
-        notification.style.transform = 'translateX(100%)';
-        setTimeout(() => {
-            if (notification.parentNode) {
-                notification.parentNode.removeChild(notification);
-            }
-        }, 300);
-    }, 3000);
+    // 统一委托给共享通知组件
+    Notify.toast(message, { type });
 }
 
 function exportSingleSlideHTML() {
@@ -482,9 +429,9 @@ function exportSingleSlideHTML() {
             // Clean up
             URL.revokeObjectURL(url);
 
-            alert(`第${contextMenuSlideIndex + 1}页已导出为HTML文件`);
+            Notify.success(`第${contextMenuSlideIndex + 1}页已导出为HTML文件`);
         } else {
-            alert('该幻灯片没有可导出的HTML内容');
+            Notify.warning('该幻灯片没有可导出的HTML内容');
         }
     }
 }

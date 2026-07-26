@@ -24,20 +24,14 @@
         };
 
         function showToast(message, type = 'success') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'info-circle';
-            toast.innerHTML = `<i class="fas fa-${icon}"></i> ${message}`;
-            container.appendChild(toast);
-            setTimeout(() => {
-                toast.classList.add('toast-out');
-                setTimeout(() => toast.remove(), 250);
-            }, 3500);
+            Notify.toast(message, { type });
         }
 
-        function showAlert(message, type = 'success') {
-            showToast(message, type);
+        async function confirmLogout(event) {
+            event.preventDefault();
+            if (await Notify.confirm('确定要退出登录吗？')) {
+                window.location.href = '/auth/logout';
+            }
         }
 
         function formatDateTime(ts) {
@@ -667,7 +661,7 @@
         }
 
         async function deleteInvite(id) {
-            if (!confirm('确定删除该邀请码吗？已使用的邀请码不能删除。')) return;
+            if (!(await Notify.confirm('确定删除该邀请码吗？已使用的邀请码不能删除。', { danger: true }))) return;
             await requestJson(`/admin/api/invite-codes/${id}`, {
                 method: 'DELETE',
             });
@@ -677,6 +671,7 @@
 
         async function createInvites(event) {
             event.preventDefault();
+            const submitBtn = event.target.querySelector('button[type="submit"]');
             const payload = {
                 count: parseInt(document.getElementById('invite_count').value || '1', 10),
                 channel: document.getElementById('invite_channel').value,
@@ -687,18 +682,29 @@
                     ? parseInt(document.getElementById('invite_expires').value, 10)
                     : null,
             };
-            const data = await requestJson('/admin/api/invite-codes', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            const createdCodes = (data.items || []).map((item) => item.code).join(', ');
-            showToast(`已生成 ${(data.items || []).length} 个邀请码：${createdCodes}`);
-            document.getElementById('inviteForm').reset();
-            document.getElementById('invite_count').value = '5';
-            document.getElementById('invite_credits').value = '0';
-            document.getElementById('invite_max_uses').value = '1';
-            await loadInviteCodes(1);
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 生成中...';
+            }
+            try {
+                const data = await requestJson('/admin/api/invite-codes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const createdCodes = (data.items || []).map((item) => item.code).join(', ');
+                showToast(`已生成 ${(data.items || []).length} 个邀请码：${createdCodes}`);
+                document.getElementById('inviteForm').reset();
+                document.getElementById('invite_count').value = '5';
+                document.getElementById('invite_credits').value = '0';
+                document.getElementById('invite_max_uses').value = '1';
+                await loadInviteCodes(1);
+            } finally {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> 生成邀请码';
+                }
+            }
         }
 
         function updateInviteMeta(total, page, totalPages) {
@@ -777,7 +783,7 @@
         }
 
         async function deleteSponsor(id) {
-            if (!confirm('确定删除该赞助人吗？')) return;
+            if (!(await Notify.confirm('确定删除该赞助人吗？', { danger: true }))) return;
             await requestJson(`/admin/api/sponsors/${id}`, { method: 'DELETE' });
             showToast('赞助人已删除');
             await loadSponsors();

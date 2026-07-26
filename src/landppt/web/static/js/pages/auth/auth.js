@@ -70,7 +70,6 @@ function syncRegistrationInviteUi() {
 
     inviteInputs.forEach((input) => {
         input.required = config.inviteCodeRequired;
-/*
         input.placeholder = config.inviteCodeRequired
             ? "输入邀请码后再注册"
             : "可选：填写邀请码领取邀请奖励";
@@ -78,18 +77,6 @@ function syncRegistrationInviteUi() {
         const label = document.querySelector(`label[for="${input.id}"]`);
         if (label) {
             label.textContent = config.inviteCodeRequired ? "邀请码" : "邀请码（选填）";
-        }
-    });
-
-    });
-*/
-        input.placeholder = config.inviteCodeRequired
-            ? "Enter invite code before registering"
-            : "Optional: enter an invite code for invite rewards";
-
-        const label = document.querySelector(`label[for="${input.id}"]`);
-        if (label) {
-            label.textContent = config.inviteCodeRequired ? "Invite Code" : "Invite Code (Optional)";
         }
     });
 

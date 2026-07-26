@@ -51,7 +51,10 @@
                 <div class="provider-accordion-item" data-provider="{{ provider }}"
                     style="border-bottom: 1px solid #eee;">
                     <!-- 提供者标题行 -->
-                    <div class="provider-header" onclick="toggleProviderAccordion('{{ provider }}')"
+                    <div class="provider-header" role="button" tabindex="0" aria-expanded="false"
+                        aria-controls="provider_content_{{ provider }}"
+                        onclick="toggleProviderAccordion('{{ provider }}')"
+                        onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); toggleProviderAccordion('{{ provider }}'); }"
                         style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; cursor: pointer; background: {% if current_provider == provider %}#f8f8f8{% else %}#fff{% endif %}; transition: background 0.2s;">
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <i class="fas fa-chevron-right provider-chevron" id="chevron_{{ provider }}"
@@ -415,12 +418,12 @@
                                 </div>
                                 <div class="param-card-control">
                                     <div class="modern-range">
-                                        <input type="range" min="500" max="1000000" step="100"
+                                        <input type="range" min="500" max="128000" step="100"
                                             value="{{ current_config.get('max_tokens', '8192') }}"
                                             data-range-for="max_tokens">
                                     </div>
                                     <div class="range-scale">
-                                        <span>500</span><span>1,000,000</span>
+                                        <span>500</span><span>128,000</span>
                                     </div>
                                     <input type="number" name="max_tokens" min="500" max="1000000"
                                         value="{{ current_config.get('max_tokens', '') }}"
@@ -1617,25 +1620,23 @@
                 </div>
             </div>
         </div>
+    </div>
 
+    <!-- Test Results Modal（放在标签页容器之外，任意标签页均可显示） -->
+    <div id="testModal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+        <div
+            style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 40px; border-radius: 15px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y: auto;">
+            <h3 style="color: #111111; margin-bottom: 20px; text-align: center;">
+                AI 提供者测试结果
+            </h3>
 
+            <div id="testResults" style="margin-bottom: 20px;">
+                <!-- Test results will be inserted here -->
+            </div>
 
-        <!-- Test Results Modal -->
-        <div id="testModal"
-            style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
-            <div
-                style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 40px; border-radius: 15px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y: auto;">
-                <h3 style="color: #111111; margin-bottom: 20px; text-align: center;">
-                    AI 提供者测试结果
-                </h3>
-
-                <div id="testResults" style="margin-bottom: 20px;">
-                    <!-- Test results will be inserted here -->
-                </div>
-
-                <div style="text-align: center;">
-                    <button onclick="closeTestModal()" class="btn btn-secondary">关闭</button>
-                </div>
+            <div style="text-align: center;">
+                <button onclick="closeTestModal()" class="btn btn-secondary">关闭</button>
             </div>
         </div>
     </div>

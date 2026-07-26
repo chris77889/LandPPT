@@ -23,9 +23,9 @@
         {% endif %}
 
         <div style="margin-top: 36px;">
-            <a href="javascript:history.back()" class="btn" style="background: #95a5a6; margin-right: 10px;">
+            <button type="button" class="btn btn-secondary" style="margin-right: 10px;" onclick="history.back()">
                 返回上一页
-            </a>
+            </button>
             <a href="/home" class="btn btn-primary">
                 返回首页
             </a>
@@ -47,8 +47,8 @@
             <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
                 <a href="/scenarios" class="btn btn-primary">创建 PPT</a>
                 <a href="/projects" class="btn btn-success">项目列表</a>
-                <a href="/dashboard" class="btn btn-info">项目仪表盘</a>
-                <a href="/docs" class="btn" style="background: #9b59b6;">API 文档</a>
+                <a href="/dashboard" class="btn btn-secondary">项目仪表盘</a>
+                <a href="/docs" class="btn btn-secondary">API 文档</a>
             </div>
         </div>
     </div>

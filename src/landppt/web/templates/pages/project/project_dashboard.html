@@ -35,8 +35,8 @@
 /* 统计卡片 */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
     margin-bottom: 24px;
 }
 
@@ -44,7 +44,7 @@
     background: #fff;
     border: 1px solid var(--border-color, #e5e7eb);
     border-radius: 12px;
-    padding: 20px;
+    padding: 16px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     transition: all 0.2s ease;
     display: flex;
@@ -100,47 +100,6 @@
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-}
-
-.action-button {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    border-radius: 8px;
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 0.95rem;
-    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-    border: 1px solid transparent;
-    cursor: pointer;
-    background: transparent;
-    color: #475569;
-    overflow: visible;
-}
-
-.action-button.primary {
-    background: transparent;
-    color: #111827;
-    border-color: transparent;
-}
-.action-button.primary:hover {
-    background: #f8fafc;
-    border-color: #e2e8f0;
-}
-
-.action-button.secondary {
-    background: transparent;
-    color: #475569;
-    border-color: transparent;
-}
-.action-button.secondary:hover {
-    background: #f8fafc;
-    border-color: #e2e8f0;
-    color: #111827;
 }
 
 /* 最近项目 */
@@ -330,15 +289,12 @@
     border-color: #fecaca;
 }
 
-.action-button:focus-visible,
 .project-action-btn:focus-visible {
     outline: none;
     border-color: #94a3b8;
     box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
 }
 
-.action-button[data-tooltip]::after,
-.action-button[data-tooltip]::before,
 .project-action-btn[data-tooltip]::after,
 .project-action-btn[data-tooltip]::before {
     position: absolute;
@@ -349,7 +305,6 @@
     z-index: 50;
 }
 
-.action-button[data-tooltip]::after,
 .project-action-btn[data-tooltip]::after {
     content: attr(data-tooltip);
     bottom: calc(100% + 8px);
@@ -365,7 +320,6 @@
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
 }
 
-.action-button[data-tooltip]::before,
 .project-action-btn[data-tooltip]::before {
     content: "";
     bottom: calc(100% + 3px);
@@ -374,10 +328,6 @@
     border-top-color: #111827;
 }
 
-.action-button[data-tooltip]:hover::after,
-.action-button[data-tooltip]:hover::before,
-.action-button[data-tooltip]:focus-visible::after,
-.action-button[data-tooltip]:focus-visible::before,
 .project-action-btn[data-tooltip]:hover::after,
 .project-action-btn[data-tooltip]:hover::before,
 .project-action-btn[data-tooltip]:focus-visible::after,
@@ -496,44 +446,6 @@
     100% { transform: rotate(360deg); }
 }
 
-/* 按钮 */
-.btn {
-    padding: 9px 16px;
-    border: 1px solid var(--border-color, #e5e7eb);
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-    text-decoration: none;
-}
-
-.btn-primary {
-    background: #111;
-    border-color: #111;
-    color: #fff;
-}
-.btn-primary:hover { background: #333; }
-
-.btn-secondary {
-    background: #f3f4f6;
-    border-color: var(--border-color, #e5e7eb);
-    color: var(--text-primary);
-}
-.btn-secondary:hover { background: #e5e7eb; }
-
-.btn-danger {
-    background: #ef4444;
-    border-color: #dc2626;
-    color: #fff;
-}
-.btn-danger:hover { background: #dc2626; }
-
 /* 统一项目工作台视觉 */
 .dashboard-header,
 .stat-card,
@@ -549,15 +461,6 @@
     background: #fff;
     border: 1px solid var(--border-color, #e5e7eb);
     margin-bottom: 16px;
-}
-
-.stats-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-}
-
-.stat-card {
-    padding: 16px;
 }
 
 .recent-projects-header,
@@ -652,7 +555,6 @@
 }
 
 .project-action-btn i,
-.action-button i,
 .btn i {
     font-size: 0.92rem;
     pointer-events: none;
@@ -758,7 +660,7 @@
 {% endblock %}
 
 {% block content %}
-<div id="dashboardRoot" data-in-progress="{{ in_progress_projects }}">
+<div id="dashboardRoot">
 
 <!-- 页头 -->
 <div class="dashboard-header">
@@ -767,10 +669,10 @@
         <p>管理您的 PPT 项目，跟踪进度</p>
     </div>
     <div class="action-buttons">
-        <a href="/scenarios" class="action-button primary" aria-label="创建新项目" data-tooltip="创建新项目">
+        <a href="/scenarios" class="project-action-btn primary" aria-label="创建新项目" data-tooltip="创建新项目">
             <i class="fas fa-plus"></i>
         </a>
-        <a href="/projects" class="action-button secondary" aria-label="所有项目" data-tooltip="所有项目">
+        <a href="/projects" class="project-action-btn secondary" aria-label="所有项目" data-tooltip="所有项目">
             <i class="fas fa-list"></i>
         </a>
     </div>
@@ -904,7 +806,7 @@
     <div class="empty-state">
         <h3>暂无项目</h3>
         <p>开始创建您的第一个 PPT 项目</p>
-        <a href="/scenarios" class="project-action-btn primary" aria-label="创建项目" data-tooltip="创建项目"><i class="fas fa-plus"></i></a>
+        <a href="/scenarios" class="btn btn-primary"><i class="fas fa-plus"></i> 创建项目</a>
     </div>
     {% endif %}
 </div>
@@ -949,12 +851,12 @@
         <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.875rem;">
             您确定要删除项目 "<span id="deleteProjectTitle" style="font-weight: bold;"></span>" 吗？
         </p>
-        <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 20px;">
+        <p style="color: #dc2626; font-size: 0.82rem; margin-bottom: 20px;">
             此操作不可撤销，将永久删除项目及其相关数据。
         </p>
         <div class="modal-actions">
-            <button onclick="closeDeleteModal()" class="project-action-btn secondary" aria-label="取消" data-tooltip="取消"><i class="fas fa-times"></i></button>
-            <button onclick="executeDeleteProject()" class="project-action-btn destructive" aria-label="确认删除" data-tooltip="确认删除"><i class="fas fa-trash-alt"></i></button>
+            <button onclick="closeDeleteModal()" class="btn">取消</button>
+            <button onclick="executeDeleteProject()" class="btn btn-danger">删除</button>
         </div>
     </div>
 </div>

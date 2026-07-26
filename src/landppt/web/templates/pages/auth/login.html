@@ -179,9 +179,9 @@
             font-size: 14px;
             animation: floatUp 8s linear infinite;
         }
-        .bw-data:nth-child(1) { left: 20%; animation-delay: 1s; content: "01"; }
-        .bw-data:nth-child(2) { left: 70%; animation-delay: 3s; content: "10"; font-size: 18px; }
-        .bw-data:nth-child(3) { left: 40%; animation-delay: 5s; content: "01"; }
+        .bw-data:nth-last-child(3) { left: 20%; animation-delay: 1s; }
+        .bw-data:nth-last-child(2) { left: 70%; animation-delay: 3s; font-size: 18px; }
+        .bw-data:nth-last-child(1) { left: 40%; animation-delay: 5s; }
 
         /* --- 内容层遮罩 (微调 padding 以对齐右侧) --- */
         .brand-content-z {
@@ -225,6 +225,20 @@
             10% { opacity: 1; }
             90% { opacity: 1; }
             100% { transform: translateY(-20vh) scale(1.5); opacity: 0; }
+        }
+
+        /* 减少动态效果偏好：停用背景动画 */
+        @media (prefers-reduced-motion: reduce) {
+            .bw-grid, .bw-scanner, .bw-slide, .bw-data {
+                animation: none !important;
+            }
+            .bw-scanner, .bw-data {
+                opacity: 0;
+            }
+            .bw-visual-bg {
+                transform: scale(0.9);
+                transition: none;
+            }
         }
     </style>
 </head>
@@ -324,17 +338,17 @@
                     <div id="authSiteNotice" class="site-notice site-notice--hidden" hidden></div>
                     <div class="auth-tabs" role="tablist" aria-label="登录与注册">
                         <div class="auth-tabs__indicator" aria-hidden="true"></div>
-                        <button type="button" data-tab="login" role="tab" aria-selected="true">登录</button>
-                        <button type="button" data-tab="register" role="tab" aria-selected="false">注册</button>
+                        <button type="button" data-tab="login" role="tab" id="tab-login" aria-controls="panel-login" aria-selected="true">登录</button>
+                        <button type="button" data-tab="register" role="tab" id="tab-register" aria-controls="panel-register" aria-selected="false">注册</button>
                     </div>
 
                     <!-- 登录面板 -->
-                    <div class="panel is-active" data-panel="login" role="tabpanel">
+                    <div class="panel is-active" data-panel="login" role="tabpanel" id="panel-login" aria-labelledby="tab-login">
                         <div class="auth-header">
                             <h2>欢迎回来</h2>
                             <p>使用您的账号登录并继续创作。</p>
                         </div>
-                        <div class="alert-area">
+                        <div class="alert-area" role="alert">
                             {% if error %}
                             <div class="alert alert--danger"><i class="fas fa-exclamation-circle"></i><div>{{ error }}</div></div>
                             {% endif %}
@@ -381,7 +395,7 @@
                     </div>
 
                     <!-- 注册面板 -->
-                    <div class="panel" data-panel="register" role="tabpanel">
+                    <div class="panel" data-panel="register" role="tabpanel" id="panel-register" aria-labelledby="tab-register">
                         <!-- ... 保持原有注册表单不变 ... -->
                         <div class="auth-header">
                             <h2>创建账户</h2>
@@ -395,7 +409,7 @@
                             <div style="margin-top:10px;"><a href="/auth/login?tab=login">返回登录</a></div>
                         </div>
                         {% else %}
-                        <div class="alert-area" id="registerAlert">
+                        <div class="alert-area" id="registerAlert" role="alert">
                             {% if register_error %}<div class="alert alert--danger"><i class="fas fa-exclamation-circle"></i><div>{{ register_error }}</div></div>{% endif %}
                         </div>
                         <form class="form" method="post" action="/auth/register" id="registerFormElement" autocomplete="on">
@@ -480,8 +494,9 @@
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const panel = document.getElementById('js-interactive-panel');
-            
+
             if (!panel) return;
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
             panel.addEventListener('mousemove', (e) => {
                 const rect = panel.getBoundingClientRect();

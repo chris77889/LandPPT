@@ -31,8 +31,8 @@
 }
 
 .image-library-header {
-    background: var(--primary-gradient);
-    color: var(--glass-text);
+    background: var(--accent-strong);
+    color: var(--accent-contrast);
     padding: var(--spacing-md) var(--spacing-lg);
     display: flex;
     justify-content: space-between;
@@ -75,10 +75,10 @@
 }
 
 .image-library-close {
-    background: var(--glass-bg);
+    background: transparent;
     backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
-    color: var(--glass-text);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: var(--accent-contrast);
     width: 40px;
     height: 40px;
     border-radius: 50%;
@@ -485,7 +485,7 @@
 }
 
 .image-preview-header {
-    background: var(--primary-gradient);
+    background: var(--accent-strong);
     color: white;
     padding: var(--spacing-md) var(--spacing-lg);
     display: flex;
@@ -526,9 +526,9 @@
 }
 
 .image-preview-close {
-    background: var(--glass-bg);
+    background: transparent;
     backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
+    border: 1px solid rgba(255, 255, 255, 0.3);
     color: white;
     width: 40px;
     height: 40px;
@@ -723,7 +723,7 @@
 
 .ai-progress-fill {
     height: 100%;
-    background: var(--accent-gradient);
+    background: var(--accent-strong);
     border-radius: 4px;
     transition: width 0.3s ease;
     width: 0%;

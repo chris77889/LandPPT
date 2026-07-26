@@ -8,6 +8,8 @@
     <link rel="icon" type="image/svg+xml" href="/static/images/landppt-logo.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/admin.css">
+    <link rel="stylesheet" href="/static/css/shared/notify.css">
+    <script src="/static/js/shared/notify.js?v=20260726"></script>
 </head>
 
 <body class="admin-body">
@@ -25,7 +27,7 @@
             <a href="/admin/oauth"><i class="fas fa-right-to-bracket"></i> OAuth</a>
             <a href="/admin/smtp" aria-current="page"><i class="fas fa-envelope"></i> SMTP</a>
             <a href="/dashboard"><i class="fas fa-home"></i> 首页</a>
-            <a href="/auth/logout" onclick="return confirm('确定要退出登录吗？')"><i
+            <a href="/auth/logout" onclick="confirmLogout(event)"><i
                     class="fas fa-arrow-right-from-bracket"></i> 退出</a>
         </div>
     </div>
@@ -201,16 +203,14 @@ user2@example.com" style="width:100%;resize:vertical;"></textarea>
 
     <script>
         function showToast(message, type = 'success') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'info-circle';
-            toast.innerHTML = `<i class="fas fa-${icon}"></i> ${message}`;
-            container.appendChild(toast);
-            setTimeout(() => {
-                toast.classList.add('toast-out');
-                setTimeout(() => toast.remove(), 250);
-            }, 3500);
+            Notify.toast(message, { type });
+        }
+
+        async function confirmLogout(event) {
+            event.preventDefault();
+            if (await Notify.confirm('确定要退出登录吗？')) {
+                window.location.href = '/auth/logout';
+            }
         }
 
         async function loadSettings() {
@@ -306,7 +306,7 @@ user2@example.com" style="width:100%;resize:vertical;"></textarea>
 
             const testResult = document.getElementById('testResult');
             testResult.style.display = 'block';
-            testResult.className = 'test-result alert-info';
+            testResult.className = 'test-result alert alert-info';
             testResult.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在发送测试邮件...';
 
             const config = {
@@ -335,14 +335,14 @@ user2@example.com" style="width:100%;resize:vertical;"></textarea>
                 const data = await res.json();
 
                 if (data.success) {
-                    testResult.className = 'test-result alert-success';
+                    testResult.className = 'test-result alert alert-success';
                     testResult.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
                 } else {
-                    testResult.className = 'test-result alert-error';
+                    testResult.className = 'test-result alert alert-error';
                     testResult.innerHTML = '<i class="fas fa-times-circle"></i> ' + data.message;
                 }
             } catch (err) {
-                testResult.className = 'test-result alert-error';
+                testResult.className = 'test-result alert alert-error';
                 testResult.innerHTML = '<i class="fas fa-times-circle"></i> 测试失败: ' + err.message;
             }
         }
@@ -356,7 +356,7 @@ user2@example.com" style="width:100%;resize:vertical;"></textarea>
 
             const resultEl = document.getElementById('inviteTestResult');
             resultEl.style.display = 'block';
-            resultEl.className = 'test-result alert-info';
+            resultEl.className = 'test-result alert alert-info';
             resultEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在生成邀请码并发送...';
 
             const payload = {
@@ -374,14 +374,14 @@ user2@example.com" style="width:100%;resize:vertical;"></textarea>
                 const data = await res.json();
 
                 if (data.success) {
-                    resultEl.className = 'test-result alert-success';
+                    resultEl.className = 'test-result alert alert-success';
                     resultEl.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
                 } else {
-                    resultEl.className = 'test-result alert-error';
+                    resultEl.className = 'test-result alert alert-error';
                     resultEl.innerHTML = '<i class="fas fa-times-circle"></i> ' + data.message;
                 }
             } catch (err) {
-                resultEl.className = 'test-result alert-error';
+                resultEl.className = 'test-result alert alert-error';
                 resultEl.innerHTML = '<i class="fas fa-times-circle"></i> 请求失败: ' + err.message;
             }
         }

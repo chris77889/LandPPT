@@ -8,14 +8,14 @@
     --accent-bg: rgba(0, 0, 0, 0.06);
     --accent-border: rgba(0, 0, 0, 0.15);
 
-    --ink: #0f172a;
+    --ink: #111111;
     --ink-2: #1e293b;
     --muted: #64748b;
     --muted-2: #94a3b8;
     --paper: #ffffff;
     --paper-2: #f8fafc;
     --paper-3: #f1f5f9;
-    --border: #e2e8f0;
+    --border: #e5e7eb;
     --border-light: #f1f5f9;
 
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -25,10 +25,10 @@
     --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.06), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
 
     --radius-xs: 6px;
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 16px;
-    --radius-xl: 20px;
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --radius-xl: 28px;
     --radius-full: 9999px;
 
     --green: #16a34a;

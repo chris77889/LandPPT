@@ -8,6 +8,8 @@
     <link rel="icon" type="image/svg+xml" href="/static/images/landppt-logo.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/admin.css">
+    <link rel="stylesheet" href="/static/css/shared/notify.css">
+    <script src="/static/js/shared/notify.js?v=20260726"></script>
 
     <style>
         .admin-body .container {
@@ -45,12 +47,28 @@
             border-bottom: 1px solid var(--border-light);
         }
 
-        .col-code { min-width: 180px; }
-        .col-credits { width: 100px; text-align: center; }
-        .col-status { width: 100px; text-align: center; }
-        .col-used-by { min-width: 120px; }
-        .col-created, .col-expires { min-width: 160px; }
-        .col-actions { width: 100px; text-align: center; }
+        .col-credits { width: 100px; }
+        .col-status { width: 100px; }
+        .col-actions { width: 100px; }
+
+        .codes-table th:nth-child(1),
+        .codes-table td:nth-child(1) { min-width: 180px; }
+
+        .codes-table th:nth-child(4),
+        .codes-table td:nth-child(4) { min-width: 120px; }
+
+        .codes-table th:nth-child(5),
+        .codes-table td:nth-child(5),
+        .codes-table th:nth-child(6),
+        .codes-table td:nth-child(6) { min-width: 160px; }
+
+        .codes-table th:nth-child(2),
+        .codes-table td:nth-child(2),
+        .codes-table th:nth-child(3),
+        .codes-table td:nth-child(3),
+        .codes-table th:nth-child(7) { text-align: center; }
+
+        .codes-table td.actions { justify-content: center; }
 
         .cell-ellipsis {
             display: block;
@@ -89,13 +107,11 @@
             <a href="/admin/oauth"><i class="fas fa-right-to-bracket"></i> OAuth</a>
             <a href="/admin/smtp"><i class="fas fa-envelope"></i> SMTP</a>
             <a href="/dashboard"><i class="fas fa-home"></i> 首页</a>
-            <a href="/auth/logout" onclick="return confirm('确定要退出登录吗？')"><i class="fas fa-arrow-right-from-bracket"></i> 退出</a>
+            <a href="/auth/logout" onclick="confirmLogout(event)"><i class="fas fa-arrow-right-from-bracket"></i> 退出</a>
         </div>
     </div>
 
     <div class="container">
-        <div id="alertArea"></div>
-
         <div class="toolbar">
             <div class="tabs" style="margin:0;">
                 <button class="tab active" onclick="showPanel('generate')">生成兑换码</button>
@@ -198,12 +214,12 @@
                                 <thead>
                                     <tr>
                                         <th>兑换码</th>
-                                        <th style="text-align:center;">积分</th>
-                                        <th style="text-align:center;">状态</th>
+                                        <th>积分</th>
+                                        <th>状态</th>
                                         <th>使用者</th>
                                         <th>创建时间</th>
                                         <th>过期时间</th>
-                                        <th style="text-align:center;">操作</th>
+                                        <th>操作</th>
                                     </tr>
                                 </thead>
                                 <tbody id="codesTable">
@@ -234,16 +250,14 @@
         let generatedCodesList = [];
 
         function showToast(message, type = 'success') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'info-circle';
-            toast.innerHTML = `<i class="fas fa-${icon}"></i> ${message}`;
-            container.appendChild(toast);
-            setTimeout(() => {
-                toast.classList.add('toast-out');
-                setTimeout(() => toast.remove(), 250);
-            }, 3500);
+            Notify.toast(message, { type });
+        }
+
+        async function confirmLogout(event) {
+            event.preventDefault();
+            if (await Notify.confirm('确定要退出登录吗？')) {
+                window.location.href = '/auth/logout';
+            }
         }
 
         function showPanel(name) {
@@ -274,10 +288,6 @@
             const creatorValue = parseInt(creatorRaw, 10);
             currentCreator = Number.isNaN(creatorValue) ? '' : String(creatorValue);
             loadCodes(1);
-        }
-
-        function showAlert(message, type = 'success') {
-            showToast(message, type);
         }
 
         function formatDateTimeSeconds(tsSeconds) {
@@ -314,10 +324,14 @@
 
         document.getElementById('generateForm').onsubmit = async (e) => {
             e.preventDefault();
+            const submitBtn = e.target.querySelector('button[type="submit"]');
             const count = parseInt(document.getElementById('codeCount').value);
             const credits = parseInt(document.getElementById('codeCredits').value);
             const expires = document.getElementById('codeExpires').value;
             const desc = document.getElementById('codeDesc').value;
+
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 生成中...';
 
             try {
                 const payload = { count, credits_amount: credits };
@@ -337,6 +351,9 @@
                 showToast(`成功生成 ${data.codes.length} 个兑换码`);
             } catch (err) {
                 showToast(err.message, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="fas fa-magic"></i> 立即生成';
             }
         };
 
@@ -437,7 +454,7 @@
         }
 
         async function deleteCode(id) {
-            if (!confirm('确定要删除此兑换码吗？')) return;
+            if (!(await Notify.confirm('确定要删除此兑换码吗？', { danger: true }))) return;
             try {
                 const res = await fetch(`/admin/api/redemption-codes/${id}`, { method: 'DELETE' });
                 if (!res.ok) throw new Error((await res.json()).detail);

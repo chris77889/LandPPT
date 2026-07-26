@@ -519,7 +519,6 @@ body.auth-body {
     position: relative;
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px;
     padding: 6px;
     border-radius: 999px;
     border: 1px solid var(--border);
@@ -551,7 +550,7 @@ body.auth-body {
     top: 6px;
     bottom: 6px;
     left: 6px;
-    width: calc(50% - 3px);
+    width: calc(50% - 6px);
     border-radius: 999px;
     background: var(--ink);
     border: 1px solid rgba(11, 11, 13, 0.12);

@@ -25,7 +25,7 @@ function openNativeChatDialog() {
     const dialog = document.getElementById('aiNativeChatDialog');
     if (!dialog) return;
     if (typeof dialog.showModal !== 'function') {
-        alert('当前浏览器不支持自由对话框（<dialog>）。');
+        Notify.warning('当前浏览器不支持自由对话框（<dialog>）。');
         return;
     }
 
@@ -80,13 +80,13 @@ function renderNativeChatMessages() {
     container.scrollTop = container.scrollHeight;
 }
 
-function clearNativeChatContext() {
+async function clearNativeChatContext() {
     if (currentSlideIndex < 0 || currentSlideIndex >= slidesData.length) {
         showNotification('请先选择一个幻灯片', 'warning');
         return;
     }
 
-    if (!confirm('确定要清除当前页的自由对话上下文吗？这将删除该页的对话记录和已添加图片。')) {
+    if (!(await Notify.confirm('确定要清除当前页的自由对话上下文吗？这将删除该页的对话记录和已添加图片。', { danger: true }))) {
         return;
     }
 

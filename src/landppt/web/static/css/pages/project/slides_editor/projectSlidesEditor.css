@@ -128,7 +128,6 @@ body::before {
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    min-width: 280px;
     min-height: 0;
 }
 
@@ -865,58 +864,6 @@ body::before {
 }
 
 
-/* 优化悬浮提示样式 */
-[title] {
-    position: relative;
-}
-
-[title]:hover::after {
-    content: attr(title);
-    position: absolute;
-    bottom: 130%;
-    left: 50%;
-    transform: translateX(-50%);
-    background: linear-gradient(135deg, #2d3748 0%, #4a5568 100%);
-    color: white;
-    padding: 10px 16px;
-    border-radius: 12px;
-    font-size: 13px;
-    font-weight: 600;
-    white-space: nowrap;
-    z-index: 1000;
-    opacity: 0;
-    animation: tooltipFadeIn 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
-    pointer-events: none;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
-}
-
-[title]:hover::before {
-    content: '';
-    position: absolute;
-    bottom: 120%;
-    left: 50%;
-    transform: translateX(-50%);
-    border: 6px solid transparent;
-    border-top-color: #2d3748;
-    z-index: 1000;
-    opacity: 0;
-    animation: tooltipFadeIn 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-}
-
-@keyframes tooltipFadeIn {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) translateY(5px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
-}
-
 /* 按钮禁用状态 */
 .toolbar-btn:disabled {
     opacity: 0.4;
@@ -1147,12 +1094,6 @@ body::before {
         height: 32px;
         min-width: 32px;
         font-size: 12px;
-    }
-
-    /* 悬浮提示在小屏幕上的优化 */
-    [title]:hover::after {
-        font-size: 11px;
-        padding: 6px 10px;
     }
 }
 

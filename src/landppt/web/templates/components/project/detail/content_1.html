@@ -108,7 +108,7 @@
                 </a>
                 {% endif %}
 
-                <button onclick="archiveProject()" class="btn btn-warning action-button">
+                <button onclick="archiveProject()" class="btn btn-secondary action-button">
                     归档项目
                 </button>
 
@@ -182,7 +182,7 @@
                         </a>
                         {% endif %}
                         {% elif stage.status == 'running' %}
-                        <a href="/projects/{{ project.project_id }}/todo" class="btn btn-info btn-sm">
+                        <a href="/projects/{{ project.project_id }}/todo" class="btn btn-secondary btn-sm">
                             查看进度
                         </a>
                         {% elif stage.status == 'completed' %}
@@ -190,7 +190,7 @@
                             已完成
                         </a>
                         {% elif stage.status == 'failed' %}
-                        <a href="/projects/{{ project.project_id }}/todo" class="btn btn-warning btn-sm">
+                        <a href="/projects/{{ project.project_id }}/todo" class="btn btn-primary btn-sm">
                             重试
                         </a>
                         {% endif %}
@@ -388,7 +388,7 @@
             </div>
 
             <div
-                style="background: var(--surface-muted); padding: 20px; border-radius: 8px; max-height: 400px; overflow-y: auto;">
+                style="background: var(--surface-subtle); padding: 20px; border-radius: 8px; max-height: 400px; overflow-y: auto;">
                 {% if project.outline and project.outline.get('content') %}
                 <pre
                     style="white-space: pre-wrap; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0; color: var(--text-secondary);">{{ project.outline.get('content') }}</pre>
@@ -408,7 +408,7 @@
         <div style="background: white; border-radius: 15px; padding: 30px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);">
             {% for version in versions %}
             <div
-                style="display: flex; align-items: center; padding: 15px; margin-bottom: 10px; background: var(--surface-muted); border-radius: 8px;">
+                style="display: flex; align-items: center; padding: 15px; margin-bottom: 10px; background: var(--surface-subtle); border-radius: 8px;">
                 <div style="margin-right: 20px;">
                     <div
                         style="width: 40px; height: 40px; background: #1f2933; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">

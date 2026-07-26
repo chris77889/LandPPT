@@ -831,7 +831,7 @@
         }
 
         async function regenerateSingleScript(slideIndex) {
-            if (!confirm(`确定要重新生成第${slideIndex + 1}页的演讲稿吗？当前内容将被覆盖。`)) {
+            if (!(await Notify.confirm(`确定要重新生成第${slideIndex + 1}页的演讲稿吗？当前内容将被覆盖。`, { danger: true }))) {
                 return;
             }
 
@@ -1123,7 +1123,7 @@ function closeSpeechScriptsDialog() {
         }
 
         async function deleteSpeechScriptBySlide(slideIndex) {
-            if (!confirm(`确定要删除第${slideIndex + 1}页的演讲稿吗？此操作不可撤销。`)) {
+            if (!(await Notify.confirm(`确定要删除第${slideIndex + 1}页的演讲稿吗？此操作不可撤销。`, { danger: true }))) {
                 return;
             }
 

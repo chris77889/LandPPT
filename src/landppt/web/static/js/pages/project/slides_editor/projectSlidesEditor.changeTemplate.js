@@ -469,7 +469,7 @@ async function _tplApply() {
     const selectedTemplate = _tplSelectedData || _tplTemplatesByKey.get(_tplSelectedKey) || null;
     const templateName = selectedTemplate?.template_name || '所选模板';
     const confirmText = `确定要将${scopeLabel}更换为「${templateName}」模板吗？\n这将重新生成 ${total} 页内容。`;
-    if (!confirm(confirmText)) {
+    if (!(await Notify.confirm(confirmText, { danger: true }))) {
         return;
     }
 

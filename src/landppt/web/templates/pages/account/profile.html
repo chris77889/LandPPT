@@ -216,6 +216,7 @@
         display: grid;
         gap: 10px;
         margin-bottom: 18px;
+        padding: 18px 32px 0;
     }
 
     .profile-page .alert {
@@ -508,25 +509,6 @@
         margin-top: 16px;
     }
 
-    .profile-form .btn-primary,
-    .checkin-actions .btn-primary,
-    .profile-links .btn-primary,
-    .redeem-form .btn-primary,
-    .api-key-actions .btn-primary {
-        background: var(--surface-contrast);
-        border-color: var(--surface-contrast);
-        color: var(--surface);
-    }
-
-    .profile-form .btn-primary:hover,
-    .checkin-actions .btn-primary:hover,
-    .profile-links .btn-primary:hover,
-    .redeem-form .btn-primary:hover,
-    .api-key-actions .btn-primary:hover {
-        box-shadow: var(--shadow-soft);
-        transform: translateY(-1px);
-    }
-
     .profile-form .btn-primary {
         width: 100%;
         justify-content: center;
@@ -698,6 +680,10 @@
             padding: 20px 16px 24px;
         }
 
+        .profile-alerts {
+            padding: 18px 16px 0;
+        }
+
         .api-key-form-grid {
             grid-template-columns: 1fr;
         }
@@ -783,7 +769,7 @@
                     <i class="fas fa-cog"></i> 后台管理
                 </a>
                 {% endif %}
-                <a href="/auth/logout" class="profile-nav-link danger" onclick="return confirm('确定要退出登录吗？')">
+                <a href="/auth/logout" class="profile-nav-link danger" id="logoutLink">
                     <i class="fas fa-right-from-bracket"></i> 退出登录
                 </a>
             </div>
@@ -791,7 +777,7 @@
 
         <div class="profile-content">
             {% if error or success %}
-            <div class="profile-alerts" style="padding: 18px 32px 0;">
+            <div class="profile-alerts">
                 {% if error %}
                 <div class="alert alert-error">{{ error }}</div>
                 {% endif %}
@@ -889,7 +875,7 @@
 
                     <div class="profile-redeem">
                         <form id="redeemForm" class="redeem-form">
-                            <input type="text" id="redeemCode" placeholder="输入兑换码" autocomplete="off">
+                            <input type="text" id="redeemCode" placeholder="输入兑换码" aria-label="兑换码" autocomplete="off">
                             <button type="submit" class="btn btn-primary">兑换</button>
                         </form>
                         <p id="redeemMsg" class="field-hint" style="margin-top:8px;"></p>
@@ -1070,6 +1056,7 @@
             const active = tab.dataset.tab === tabId;
             tab.classList.toggle("is-active", active);
             tab.setAttribute("aria-selected", active ? "true" : "false");
+            tab.tabIndex = active ? 0 : -1;
             if (active) {
                 matched = true;
             }
@@ -1081,6 +1068,7 @@
                 const active = tab.dataset.tab === tabId;
                 tab.classList.toggle("is-active", active);
                 tab.setAttribute("aria-selected", active ? "true" : "false");
+                tab.tabIndex = active ? 0 : -1;
             });
         }
 
@@ -1108,6 +1096,45 @@
         });
     });
 
+    const profileTabsContainer = document.querySelector(".profile-tabs");
+    if (profileTabsContainer) {
+        profileTabsContainer.addEventListener("keydown", (event) => {
+            if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                return;
+            }
+
+            const tabs = Array.from(profileTabsContainer.querySelectorAll(".profile-tab[data-tab]"));
+            const currentIndex = tabs.indexOf(document.activeElement);
+            if (currentIndex === -1) {
+                return;
+            }
+
+            event.preventDefault();
+            let nextIndex = currentIndex;
+            if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+                nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+            } else if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+                nextIndex = (currentIndex + 1) % tabs.length;
+            } else if (event.key === "Home") {
+                nextIndex = 0;
+            } else if (event.key === "End") {
+                nextIndex = tabs.length - 1;
+            }
+
+            tabs[nextIndex].focus();
+            activateProfileTab(tabs[nextIndex].dataset.tab);
+        });
+
+        const tabOrientationQuery = window.matchMedia("(max-width: 900px)");
+        const syncTabOrientation = () => {
+            profileTabsContainer.setAttribute("aria-orientation", tabOrientationQuery.matches ? "horizontal" : "vertical");
+        };
+        syncTabOrientation();
+        if (typeof tabOrientationQuery.addEventListener === "function") {
+            tabOrientationQuery.addEventListener("change", syncTabOrientation);
+        }
+    }
+
     const initialTab = (window.location.hash || "").replace(/^#/, "") || "overview";
     activateProfileTab(initialTab, { updateHash: false });
 
@@ -1121,6 +1148,16 @@
     document.querySelectorAll(".js-ts").forEach((node) => {
         node.textContent = formatUnixTimestamp(node.dataset.ts);
     });
+
+    const logoutLink = document.getElementById("logoutLink");
+    if (logoutLink) {
+        logoutLink.addEventListener("click", async (event) => {
+            event.preventDefault();
+            if (await Notify.confirm("确定要退出登录吗？")) {
+                window.location.href = logoutLink.href;
+            }
+        });
+    }
 
     const confirmPasswordInput = document.getElementById("confirm_password");
     const newPasswordInput = document.getElementById("new_password");
@@ -1252,7 +1289,7 @@
                     if (codeInput) {
                         codeInput.value = "";
                     }
-                    setTimeout(() => window.location.reload(), 1200);
+                    updateProfileBalance(data.new_balance);
                     return;
                 }
 
@@ -1383,7 +1420,7 @@
             return;
         }
 
-        if (!window.confirm("确定要删除这个 API Key 吗？删除后不能恢复。")) {
+        if (!(await Notify.confirm("确定要删除这个 API Key 吗？删除后不能恢复。", { danger: true }))) {
             return;
         }
 

@@ -182,11 +182,6 @@ function installSlideshowFrameWheelBridge(iframe) {
     }
 }
 
-// 遮罩层点击翻页
-function handleSlideshowShieldClick() {
-    nextSlideshow();
-}
-
 // 滚轮翻页：向下滚动下一页，向上滚动上一页（节流避免一次惯性滚动连翻多页）
 let slideshowWheelLockUntil = 0;
 
@@ -220,18 +215,12 @@ function startSlideshow() {
     const overlay = document.getElementById('slideshowOverlay');
     const frame1 = document.getElementById('slideshowFrame1');
     const frame2 = document.getElementById('slideshowFrame2');
-    const shield = document.getElementById('slideshowShield');
 
     // 初始化iframe状态
     frame1.classList.add('visible');
     frame1.classList.remove('hidden');
     frame2.classList.add('hidden');
     frame2.classList.remove('visible');
-
-    // 遮罩层点击翻页
-    if (shield) {
-        shield.addEventListener('click', handleSlideshowShieldClick);
-    }
 
     // 使用requestAnimationFrame优化显示
     requestAnimationFrame(() => {
@@ -293,11 +282,6 @@ function exitSlideshow() {
     const overlay = document.getElementById('slideshowOverlay');
     const frame1 = document.getElementById('slideshowFrame1');
     const frame2 = document.getElementById('slideshowFrame2');
-    const shield = document.getElementById('slideshowShield');
-
-    if (shield) {
-        shield.removeEventListener('click', handleSlideshowShieldClick);
-    }
 
     // 使用fade out效果
     overlay.style.opacity = '0';

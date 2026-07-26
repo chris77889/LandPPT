@@ -830,7 +830,7 @@ function handleSidebarResize(e) {
     if (!sidebar) return;
 
     const deltaX = sidebarStartX - e.clientX; // 向左拖拽为正值
-    const newWidth = Math.max(400, Math.min(800, sidebarStartWidth + deltaX));
+    const newWidth = Math.max(500, Math.min(1000, sidebarStartWidth + deltaX));
 
     sidebar.style.width = newWidth + 'px';
     sidebar.style.right = sidebar.classList.contains('open') ? '0' : `-${newWidth}px`;

@@ -34,13 +34,13 @@ async function pollBackgroundTaskUntilDone(taskId, { timeoutMs = 30 * 60 * 1000,
     }
 }
 
-function regenerateSlideByIndex(slideIndex) {
+async function regenerateSlideByIndex(slideIndex) {
     // 防御：若slides_data存在缺页导致错位，先按page_number/大纲归一化，避免错页写入
     normalizeSlidesDataToOutline();
 
     const outlineTotal = getOutlineSlidesCount();
     if (slideIndex < 0 || slideIndex >= outlineTotal) {
-        alert('无效的幻灯片索引');
+        Notify.error('无效的幻灯片索引');
         return;
     }
 
@@ -49,7 +49,7 @@ function regenerateSlideByIndex(slideIndex) {
         ? projectOutline.slides[slideIndex].title
         : null;
     const slideTitle = (slidesData[slideIndex] && slidesData[slideIndex].title) || outlineTitle || `第${slideIndex + 1}页`;
-    if (confirm(`确定要重新生成"${slideTitle}"吗？这将覆盖现有内容。`)) {
+    if (await Notify.confirm(`确定要重新生成"${slideTitle}"吗？这将覆盖现有内容。`, { danger: true })) {
         // Show loading indicator
         const loadingDiv = document.createElement('div');
         loadingDiv.id = 'regenerateLoading';
@@ -159,7 +159,7 @@ function regenerateSlideByIndex(slideIndex) {
                 }
             } catch (error) {
                 console.error('Slide regenerate error:', error);
-                alert('重新生成失败：' + (error && error.message ? error.message : error));
+                Notify.error('重新生成失败：' + (error && error.message ? error.message : error));
             } finally {
                 if (loadingDiv && loadingDiv.parentNode) {
                     loadingDiv.parentNode.removeChild(loadingDiv);
@@ -210,7 +210,7 @@ async function batchRegenerateSlides({ slideIndices, regenerateAll }) {
         ? `确定要一键重新生成全部${total}页吗？这将覆盖现有内容。`
         : `确定要重新生成所选${total}页吗？这将覆盖现有内容。`;
 
-    if (!confirm(confirmText)) {
+    if (!(await Notify.confirm(confirmText, { danger: true }))) {
         return;
     }
 

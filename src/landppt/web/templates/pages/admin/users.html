@@ -8,6 +8,8 @@
     <link rel="icon" type="image/svg+xml" href="/static/images/landppt-logo.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/admin.css">
+    <link rel="stylesheet" href="/static/css/shared/notify.css">
+    <script src="/static/js/shared/notify.js?v=20260726"></script>
 
     <style>
         .users-topbar {
@@ -188,7 +190,7 @@
             <a href="/admin/oauth"><i class="fas fa-right-to-bracket"></i> OAuth</a>
             <a href="/admin/smtp"><i class="fas fa-envelope"></i> SMTP</a>
             <a href="/dashboard"><i class="fas fa-home"></i> 首页</a>
-            <a href="/auth/logout" onclick="return confirm('确定要退出登录吗？')"><i
+            <a href="/auth/logout" onclick="confirmLogout(event)"><i
                     class="fas fa-arrow-right-from-bracket"></i> 退出</a>
         </div>
     </div>
@@ -327,19 +329,19 @@
             <form id="userForm">
                 <input type="hidden" id="userId" value="">
                 <div class="form-group">
-                    <label>用户名 *</label>
+                    <label for="userUsername">用户名 *</label>
                     <input type="text" id="userUsername" required>
                 </div>
                 <div class="form-group" id="passwordGroup">
-                    <label>密码 *</label>
+                    <label for="userPassword">密码 *</label>
                     <input type="password" id="userPassword">
                 </div>
                 <div class="form-group">
-                    <label>邮箱</label>
+                    <label for="userEmail">邮箱</label>
                     <input type="email" id="userEmail">
                 </div>
                 <div class="form-group">
-                    <label>角色</label>
+                    <label for="userRole">角色</label>
                     <select id="userRole">
                         <option value="false">普通用户</option>
                         <option value="true">管理员</option>
@@ -389,7 +391,7 @@
                 </div>
                 {% if credits_enabled %}
                 <div class="form-group" id="creditsGroup" style="margin-top:16px;">
-                    <label>初始积分</label>
+                    <label for="userCredits">初始积分</label>
                     <input type="number" id="userCredits" value="100" min="0">
                 </div>
                 {% endif %}
@@ -407,15 +409,29 @@
             <form id="creditsForm">
                 <input type="hidden" id="creditsUserId" value="">
                 <div class="form-group">
-                    <label>调整金额 (正数增加，负数扣除)</label>
+                    <label for="creditsAmount">调整金额 (正数增加，负数扣除)</label>
                     <input type="number" id="creditsAmount" required>
                 </div>
                 <div class="form-group">
-                    <label>说明</label>
+                    <label for="creditsDescription">说明</label>
                     <input type="text" id="creditsDescription" required>
                 </div>
                 <button type="submit" class="btn" style="width:100%;margin-top:20px;">确认调整</button>
             </form>
+        </div>
+    </div>
+
+    <div class="modal" id="tempPasswordModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>密码已重置</h3>
+                <button class="modal-close" onclick="closeTempPasswordModal()">&times;</button>
+            </div>
+            <p style="font-size:0.875rem;color:var(--muted);margin-bottom:16px;">请复制并妥善保存以下临时密码，关闭窗口后将无法再次查看：</p>
+            <div class="code-item" style="width:100%;justify-content:space-between;">
+                <span id="tempPasswordValue"></span>
+                <button onclick="copyTempPassword()" title="复制"><i class="fas fa-copy"></i></button>
+            </div>
         </div>
     </div>
 
@@ -429,16 +445,14 @@
         const tableColspan = creditsEnabled ? 12 : 11;
 
         function showToast(message, type = 'success') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'info-circle';
-            toast.innerHTML = `<i class="fas fa-${icon}"></i> ${message}`;
-            container.appendChild(toast);
-            setTimeout(() => {
-                toast.classList.add('toast-out');
-                setTimeout(() => toast.remove(), 250);
-            }, 3500);
+            Notify.toast(message, { type });
+        }
+
+        async function confirmLogout(event) {
+            event.preventDefault();
+            if (await Notify.confirm('确定要退出登录吗？')) {
+                window.location.href = '/auth/logout';
+            }
         }
 
         function syncUsersTableColspan() {
@@ -637,20 +651,25 @@
         }
 
         async function editUser(id) {
-            const res = await fetch(`/admin/api/users/${id}`);
-            const data = await res.json();
-            const u = data.user;
-            document.getElementById('modalTitle').textContent = '编辑用户';
-            document.getElementById('userId').value = u.id;
-            document.getElementById('userUsername').value = u.username;
-            document.getElementById('userUsername').disabled = true;
-            document.getElementById('userPassword').value = '';
-            document.getElementById('userEmail').value = u.email || '';
-            document.getElementById('userRole').value = u.is_admin ? 'true' : 'false';
-            document.getElementById('passwordGroup').style.display = 'none';
-            if (creditsEnabled) document.getElementById('creditsGroup').style.display = 'none';
-            populateUserDetails(u);
-            document.getElementById('userModal').classList.add('active');
+            try {
+                const res = await fetch(`/admin/api/users/${id}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || '加载用户信息失败');
+                const u = data.user;
+                document.getElementById('modalTitle').textContent = '编辑用户';
+                document.getElementById('userId').value = u.id;
+                document.getElementById('userUsername').value = u.username;
+                document.getElementById('userUsername').disabled = true;
+                document.getElementById('userPassword').value = '';
+                document.getElementById('userEmail').value = u.email || '';
+                document.getElementById('userRole').value = u.is_admin ? 'true' : 'false';
+                document.getElementById('passwordGroup').style.display = 'none';
+                if (creditsEnabled) document.getElementById('creditsGroup').style.display = 'none';
+                populateUserDetails(u);
+                document.getElementById('userModal').classList.add('active');
+            } catch (err) {
+                showToast(err.message || '加载用户信息失败', 'error');
+            }
         }
 
         function closeModal() { document.getElementById('userModal').classList.remove('active'); }
@@ -716,19 +735,31 @@
             }
         };
 
+        function showTempPassword(password) {
+            document.getElementById('tempPasswordValue').textContent = password;
+            document.getElementById('tempPasswordModal').classList.add('active');
+        }
+
+        function closeTempPasswordModal() { document.getElementById('tempPasswordModal').classList.remove('active'); }
+
+        function copyTempPassword() {
+            navigator.clipboard.writeText(document.getElementById('tempPasswordValue').textContent);
+            showToast('临时密码已复制');
+        }
+
         async function resetPassword(userId) {
-            if (!confirm('确定要重置该用户的密码吗？')) return;
+            if (!(await Notify.confirm('确定要重置该用户的密码吗？', { danger: true }))) return;
             const res = await fetch(`/admin/api/users/${userId}/reset-password`, { method: 'POST' });
             const data = await res.json();
             if (res.ok) {
-                showToast(`密码已重置为: ${data.temporary_password}`);
+                showTempPassword(data.temporary_password);
             } else {
                 showToast(data.detail || '操作失败', 'error');
             }
         }
 
         async function deactivateUser(userId) {
-            if (!confirm('确定要停用该用户吗？')) return;
+            if (!(await Notify.confirm('确定要停用该用户吗？', { danger: true }))) return;
             const res = await fetch(`/admin/api/users/${userId}`, { method: 'DELETE' });
             if (res.ok) {
                 loadUsers(currentPage);
@@ -740,7 +771,7 @@
         }
 
         async function activateUser(userId) {
-            if (!confirm('确定要启用该用户吗？')) return;
+            if (!(await Notify.confirm('确定要启用该用户吗？'))) return;
             const res = await fetch(`/admin/api/users/${userId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -755,8 +786,17 @@
             }
         }
 
+        let searchDebounceTimer = null;
+        document.getElementById('searchInput').addEventListener('input', () => {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(searchUsers, 300);
+        });
+
         document.getElementById('searchInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') searchUsers();
+            if (e.key === 'Enter') {
+                clearTimeout(searchDebounceTimer);
+                searchUsers();
+            }
         });
 
         document.getElementById('filterStatus').addEventListener('change', () => loadUsers(1));

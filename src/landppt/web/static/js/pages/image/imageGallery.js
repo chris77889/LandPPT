@@ -78,7 +78,7 @@ function renderImageGrid() {
 
     if (filteredImages.length === 0) {
         grid.innerHTML = `
-            <div class="loading-placeholder" style="text-align: center; padding: 60px; color: #7f8c8d; grid-column: 1 / -1;">
+            <div class="loading-placeholder" style="text-align: center; padding: 60px; color: var(--text-secondary); grid-column: 1 / -1;">
                 <div style="font-size: 3em; margin-bottom: 20px;"><i class="fas fa-image"></i></div>
                 <p>暂无图片</p>
             </div>
@@ -100,6 +100,7 @@ function renderImageGrid() {
             checkbox.className = 'batch-checkbox';
             checkbox.checked = selectedImages.has(image.image_id);
             checkbox.dataset.imageId = image.image_id;
+            checkbox.setAttribute('aria-label', `选择 ${image.title || image.filename}`);
             item.appendChild(checkbox);
         }
 
@@ -251,6 +252,11 @@ function bindUploadEvents() {
         fileInput.addEventListener('change', handleFileSelect);
     }
     if (dropZone) {
+        dropZone.addEventListener('click', (event) => {
+            if (fileInput && !event.target.closest('#file-trigger')) {
+                fileInput.click();
+            }
+        });
         dropZone.addEventListener('dragover', handleDragOver);
         dropZone.addEventListener('dragleave', handleDragLeave);
         dropZone.addEventListener('drop', handleDrop);
@@ -298,6 +304,12 @@ function bindKeyboardShortcuts() {
             if (document.getElementById('image-detail-modal').style.display === 'flex') {
                 closeImageDetailModal();
             }
+        }
+
+        // 输入控件聚焦时不触发批量快捷键
+        const target = event.target;
+        if (target instanceof HTMLElement && (target.matches('input, textarea, select') || target.isContentEditable)) {
+            return;
         }
 
         if (event.ctrlKey && event.key === 'a' && batchMode) {
@@ -403,14 +415,12 @@ function formatFileSize(bytes) {
 
 // 显示错误信息
 function showError(message) {
-    // 这里可以集成现有的通知系统
-    alert(message);
+    Notify.error(message);
 }
 
 // 显示成功信息
 function showSuccess(message) {
-    // 这里可以集成现有的通知系统
-    alert(message);
+    Notify.success(message);
 }
 
 // 批量选择相关功能
@@ -420,12 +430,12 @@ function toggleBatchMode() {
     const toolbar = document.getElementById('batch-toolbar');
 
     if (batchMode) {
-        btn.textContent = '退出批量';
+        btn.innerHTML = '<i class="fas fa-times"></i> 退出批量';
         btn.className = 'btn btn-danger';
         toolbar.style.display = 'block';
     } else {
-        btn.textContent = '批量选择';
-        btn.className = 'btn btn-secondary';
+        btn.innerHTML = '<i class="fas fa-check-square"></i> 批量选择';
+        btn.className = 'btn btn-outline';
         toolbar.style.display = 'none';
         selectedImages.clear();
     }
@@ -441,7 +451,14 @@ function toggleImageSelection(imageId) {
         selectedImages.add(imageId);
     }
 
-    renderImageGrid();
+    // 只更新对应的卡片，避免整个网格重绘导致缩略图闪烁
+    const item = document.querySelector(`.image-item[data-image-id="${imageId}"]`);
+    if (item) {
+        const selected = selectedImages.has(imageId);
+        item.classList.toggle('selected', selected);
+        const checkbox = item.querySelector('.batch-checkbox');
+        if (checkbox) checkbox.checked = selected;
+    }
     updateSelectedCount();
 }
 
@@ -468,13 +485,15 @@ async function batchDelete() {
         return;
     }
 
-    if (!confirm(`确定要删除选中的 ${selectedImages.size} 张图片吗？此操作不可撤销。`)) {
+    // 确认弹窗期间选中集可能变化，先快照，删除的就是提示里的这批
+    const imageIds = Array.from(selectedImages);
+    if (!(await Notify.confirm(`确定要删除选中的 ${imageIds.length} 张图片吗？此操作不可撤销。`, { danger: true }))) {
         return;
     }
 
     try {
         const data = await apiClient.post('/api/image/gallery/batch-delete', {
-            image_ids: Array.from(selectedImages)
+            image_ids: imageIds
         });
 
         if (data.success) {
@@ -521,11 +540,11 @@ async function batchDownload() {
 
 // 清空当前用户图库
 async function clearAllImages() {
-    if (!confirm('警告：此操作将删除你图库中的所有图片且不可恢复，确定要继续吗？')) {
+    if (!(await Notify.confirm('警告：此操作将删除你图库中的所有图片且不可恢复，确定要继续吗？', { danger: true }))) {
         return;
     }
 
-    if (!confirm('请再次确认是否要清空你的整个图库？删除后无法恢复。')) {
+    if (!(await Notify.confirm('请再次确认是否要清空你的整个图库？删除后无法恢复。', { danger: true }))) {
         return;
     }
 
@@ -600,7 +619,7 @@ async function downloadSingleImage(imageId) {
 }
 
 async function deleteSingleImage(imageId) {
-    if (!confirm('确定要删除这张图片吗？此操作不可撤销。')) {
+    if (!(await Notify.confirm('确定要删除这张图片吗？此操作不可撤销。', { danger: true }))) {
         return;
     }
 
@@ -772,7 +791,9 @@ async function showImageDetail(imageId) {
 
             // 填充详情信息
             document.getElementById('image-detail-title').textContent = data.image.title || data.image.filename;
-            document.getElementById('detail-image').src = `${window.location.origin}/api/image/view/${imageId}`;
+            const detailImage = document.getElementById('detail-image');
+            detailImage.src = `${window.location.origin}/api/image/view/${imageId}`;
+            detailImage.alt = data.image.title || data.image.filename;
 
             // 填充可编辑的图片信息
             document.getElementById('display-title').textContent = data.image.title || '未设置';
@@ -939,6 +960,14 @@ async function saveImageInfo() {
 // 获取分类标签
 function getCategoryLabel(category) {
     const categoryLabels = {
+        'business': '商务',
+        'technology': '技术',
+        'education': '教育',
+        'design': '设计',
+        'nature': '自然',
+        'people': '人物',
+        'abstract': '抽象',
+        'other': '其他',
         'ai_generated': 'AI生成',
         'web_search': '网络搜索',
         'local_storage': '本地上传'

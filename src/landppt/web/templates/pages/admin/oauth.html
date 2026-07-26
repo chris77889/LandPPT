@@ -8,6 +8,8 @@
     <link rel="icon" type="image/svg+xml" href="/static/images/landppt-logo.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/admin.css">
+    <link rel="stylesheet" href="/static/css/shared/notify.css">
+    <script src="/static/js/shared/notify.js?v=20260726"></script>
     <style>
         .community-grid {
             display: grid;
@@ -314,7 +316,7 @@
             <a href="/admin/oauth" aria-current="page"><i class="fas fa-right-to-bracket"></i> OAuth</a>
             <a href="/admin/smtp"><i class="fas fa-envelope"></i> SMTP</a>
             <a href="/dashboard"><i class="fas fa-home"></i> 首页</a>
-            <a href="/auth/logout" onclick="return confirm('确定要退出登录吗？')"><i class="fas fa-arrow-right-from-bracket"></i> 退出</a>
+            <a href="/auth/logout" onclick="confirmLogout(event)"><i class="fas fa-arrow-right-from-bracket"></i> 退出</a>
         </div>
     </div>
 
@@ -341,7 +343,6 @@
                     </div>
                     <div class="oauth-status-stack">
                         <span class="status-pill" id="githubStatus"><i class="fas fa-circle"></i> 未启用</span>
-                        <span id="githubSwitchState" hidden>关闭</span>
                     </div>
                 </div>
                 <div class="section-body panel-stack">
@@ -392,7 +393,6 @@
                     </div>
                     <div class="oauth-status-stack">
                         <span class="status-pill" id="linuxdoStatus"><i class="fas fa-circle"></i> 未启用</span>
-                        <span id="linuxdoSwitchState" hidden>关闭</span>
                     </div>
                 </div>
                 <div class="section-body panel-stack">
@@ -439,16 +439,14 @@
         }
 
         function showToast(message, type = 'success') {
-            const container = getField('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'info-circle';
-            toast.innerHTML = `<i class="fas fa-${icon}"></i> ${message}`;
-            container.appendChild(toast);
-            setTimeout(() => {
-                toast.classList.add('toast-out');
-                setTimeout(() => toast.remove(), 250);
-            }, 3500);
+            Notify.toast(message, { type });
+        }
+
+        async function confirmLogout(event) {
+            event.preventDefault();
+            if (await Notify.confirm('确定要退出登录吗？')) {
+                window.location.href = '/auth/logout';
+            }
         }
 
         function toggleSecret(inputId, button) {
@@ -490,7 +488,6 @@
 
         function applyStatus(provider, enabled, configured) {
             const el = getField(`${provider}Status`);
-            const switchState = getField(`${provider}SwitchState`);
             const card = document.querySelector(`.oauth-provider-card[data-provider="${provider}"]`);
             if (!el) return;
 
@@ -499,7 +496,6 @@
             if (enabled && configured) {
                 el.classList.add('is-on');
                 el.innerHTML = '<i class="fas fa-circle"></i> 已启用';
-                if (switchState) switchState.textContent = '开启';
                 if (card) card.dataset.state = 'enabled';
                 return;
             }
@@ -507,13 +503,11 @@
             if (enabled) {
                 el.classList.add('is-pending');
                 el.innerHTML = '<i class="fas fa-circle"></i> 待补全';
-                if (switchState) switchState.textContent = '待补全';
                 if (card) card.dataset.state = 'pending';
                 return;
             }
 
             el.innerHTML = '<i class="fas fa-circle"></i> 未启用';
-            if (switchState) switchState.textContent = '关闭';
             if (card) card.dataset.state = 'disabled';
         }
 

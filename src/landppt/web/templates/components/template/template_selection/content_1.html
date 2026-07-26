@@ -120,11 +120,14 @@
     <div class="modal-content" style="max-width: 95%; width: 95%; max-height: 95vh;">
         <div class="modal-header">
             <h2 id="previewTitle">模板预览</h2>
-            <span class="close" id="closePreviewModal">&times;</span>
+            <button type="button" class="close" id="closePreviewModal" aria-label="关闭预览">&times;</button>
         </div>
         <div class="modal-body" style="text-align: center;">
-            <iframe id="previewFrame"
-                style="width: 1280px; height: 720px; border: 1px solid var(--border-color, #e5e7eb); border-radius: 8px; transform: scale(0.8); transform-origin: top left; margin: 0 auto;"></iframe>
+            <div id="previewFrameWrap"
+                style="position: relative; width: 100%; max-width: calc(85vh * 16 / 9); margin: 0 auto; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid var(--border-color, #e5e7eb); border-radius: 8px; background: #f8fafc;">
+                <iframe id="previewFrame"
+                    style="width: 1280px; height: 720px; border: none; position: absolute; left: 0; top: 0; transform-origin: top left;"></iframe>
+            </div>
         </div>
     </div>
 </div>

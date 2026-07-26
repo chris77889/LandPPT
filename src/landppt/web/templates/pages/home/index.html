@@ -83,19 +83,6 @@
         margin-bottom: var(--spacing-md);
     }
 
-    .btn-monochrome,
-    .btn.btn-primary {
-        background: var(--surface-contrast) !important;
-        border-color: rgba(17, 17, 17, 0.9) !important;
-        color: var(--surface) !important;
-    }
-
-    .btn-outline {
-        background: transparent;
-        border-color: rgba(17, 17, 17, 0.18);
-        color: var(--text-primary);
-    }
-
     @media (max-width: 768px) {
         .hero-section {
             padding: var(--spacing-lg);
@@ -112,7 +99,7 @@
     {% set provider_names = {'landppt': 'LandPPT', 'openai': 'OpenAI', 'anthropic': 'Anthropic Claude', 'google': 'Google Gemini', 'ollama': 'Ollama'} %}
     <div class="provider-badge">
         <span>当前 AI 提供者: <strong>{{ provider_names.get(ai_provider, ai_provider) }}</strong></span>
-        <a href="/ai-config" class="btn-outline"
+        <a href="/ai-config" class="btn btn-outline"
             style="padding: 6px 14px; border-radius: var(--border-radius-sm); text-decoration: none; font-size: 0.9rem;">系统配置</a>
     </div>
     {% endif %}
@@ -121,14 +108,14 @@
 <div class="grid">
     <div class="card action-card">
         <h3>快速生成</h3>
-        <p>选择场景模板，输入主题，一键生成专业 PPT。</p>
-        <a href="/scenarios" class="btn btn-monochrome">开始创建 PPT</a>
+        <p>输入主题与需求，一键生成专业 PPT。</p>
+        <a href="/create" class="btn btn-primary">开始创建 PPT</a>
     </div>
 
     <div class="card action-card">
         <h3>项目仪表板</h3>
         <p>管理项目、查看 TODO 看板与进度跟踪，掌握项目全局。</p>
-        <a href="/dashboard" class="btn btn-monochrome">打开仪表板</a>
+        <a href="/dashboard" class="btn btn-primary">打开仪表板</a>
     </div>
 </div>
 {% endblock %}

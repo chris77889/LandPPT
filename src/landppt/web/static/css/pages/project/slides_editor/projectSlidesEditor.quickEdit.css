@@ -754,21 +754,6 @@
     cursor: grabbing !important;
 }
 
-/* 快速编辑模式提示 */
-.quick-edit-mode-hint {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--surface-contrast);
-    color: var(--surface);
-    padding: 10px 20px;
-    border-radius: var(--border-radius-lg);
-    font-size: 13px;
-    z-index: 1500;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-}
-
 @keyframes spin {
     from {
         transform: rotate(0deg);
@@ -822,8 +807,8 @@
 }
 
 .image-select-header {
-    background: var(--primary-gradient);
-    color: var(--glass-text);
+    background: var(--accent-strong);
+    color: var(--accent-contrast);
     padding: var(--spacing-md) var(--spacing-lg);
     display: flex;
     justify-content: space-between;
@@ -855,10 +840,10 @@
 }
 
 .image-select-close {
-    background: var(--glass-bg);
+    background: transparent;
     backdrop-filter: blur(10px);
-    border: 1px solid var(--glass-border);
-    color: var(--glass-text);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: var(--accent-contrast);
     width: 32px;
     height: 32px;
     border-radius: 50%;

@@ -1101,13 +1101,23 @@
             }
             stopNarration();
 
-            // 退出全屏
+            // 先退出浏览器全屏，再次触发才退出演示
             if (document.fullscreenElement) {
                 document.exitFullscreen();
+                return;
             }
 
-            // 关闭浏览器标签页
+            // 尝试关闭浏览器标签页（仅对脚本打开的窗口有效）
             window.close();
+
+            // 无法关闭时回退到项目页面或上一页
+            setTimeout(function () {
+                if (!narrationIsSharedView) {
+                    window.location.href = '/projects/{{ project.project_id }}';
+                } else if (window.history.length > 1) {
+                    window.history.back();
+                }
+            }, 150);
         }
 
         // 键盘事件处理（防抖）

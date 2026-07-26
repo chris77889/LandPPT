@@ -1,0 +1,259 @@
+/* LandPPT 共享通知组件 —— toast + 对话框（confirm / prompt / alert） */
+
+/* ── Toast ─────────────────────────────────────────────── */
+.ln-toast-root {
+    position: fixed;
+    inset: auto;
+    top: 20px;
+    right: 20px;
+    z-index: 1000010;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+    max-width: min(400px, calc(100vw - 40px));
+    /* 容器可能以 popover 打开（进入 top layer），重置 UA popover 默认样式 */
+    width: auto;
+    height: auto;
+    margin: 0;
+    border: none;
+    padding: 0;
+    overflow: visible;
+    background: transparent;
+    color: inherit;
+}
+
+.ln-toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    pointer-events: auto;
+    background: #ffffff;
+    color: #111111;
+    border: 1px solid #e5e7eb;
+    border-left: 3px solid #111111;
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.12);
+    font-size: 0.92rem;
+    line-height: 1.5;
+    opacity: 0;
+    transform: translateX(16px);
+    transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.ln-toast.ln-in {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.ln-toast.ln-out {
+    opacity: 0;
+    transform: translateX(16px);
+}
+
+.ln-toast--success { border-left-color: #16a34a; }
+.ln-toast--error   { border-left-color: #ef4444; }
+.ln-toast--warning { border-left-color: #f59e0b; }
+.ln-toast--info    { border-left-color: #111111; }
+
+.ln-toast__icon {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+}
+
+.ln-toast--success .ln-toast__icon { color: #16a34a; }
+.ln-toast--error   .ln-toast__icon { color: #ef4444; }
+.ln-toast--warning .ln-toast__icon { color: #b45309; }
+.ln-toast--info    .ln-toast__icon { color: #111111; }
+
+.ln-toast__msg {
+    flex: 1;
+    min-width: 0;
+    white-space: pre-line;
+    overflow-wrap: break-word;
+}
+
+.ln-toast__close {
+    flex-shrink: 0;
+    appearance: none;
+    background: none;
+    border: none;
+    padding: 2px;
+    margin: -2px -4px 0 0;
+    cursor: pointer;
+    color: #9ca3af;
+    line-height: 1;
+    border-radius: 6px;
+}
+
+.ln-toast__close:hover { color: #111111; background: #f5f5f5; }
+
+.ln-toast__close:focus-visible,
+.ln-dialog__btn:focus-visible,
+.ln-dialog__input:focus-visible {
+    outline: 2px solid #0f172a;
+    outline-offset: 2px;
+}
+
+/* ── 对话框 ────────────────────────────────────────────── */
+.ln-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000000;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+}
+
+/* 现代浏览器下 overlay 是 <dialog>（showModal 进入 top layer），重置 UA 默认样式 */
+dialog.ln-dialog-overlay {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border: none;
+    outline: none;
+    color: inherit;
+    overflow: hidden;
+}
+
+dialog.ln-dialog-overlay::backdrop {
+    background: transparent;
+}
+
+/* 被浏览器强制关闭（如安卓返回手势）后不得再遮挡页面 */
+dialog.ln-dialog-overlay:not([open]) {
+    display: none;
+}
+
+.ln-dialog-overlay.ln-in { opacity: 1; }
+
+.ln-dialog {
+    background: #ffffff;
+    color: #111111;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
+    width: 100%;
+    max-width: 420px;
+    padding: 22px 24px;
+    transform: translateY(10px) scale(0.98);
+    transition: transform 0.18s ease;
+}
+
+.ln-dialog-overlay.ln-in .ln-dialog { transform: translateY(0) scale(1); }
+
+.ln-dialog__title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+}
+
+.ln-dialog__msg {
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: #4b5563;
+    margin: 0 0 18px;
+    white-space: pre-line;
+    overflow-wrap: break-word;
+    max-height: 45vh;
+    overflow-y: auto;
+}
+
+.ln-dialog__input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    font: inherit;
+    color: #111111;
+    margin: -6px 0 18px;
+}
+
+.ln-dialog__input:focus {
+    outline: none;
+    border-color: #0f172a;
+    box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.08);
+}
+
+.ln-dialog__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.ln-dialog__btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 9px 16px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    color: #111111;
+    font: inherit;
+    font-size: 0.92rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    min-width: 76px;
+}
+
+.ln-dialog__btn:hover { background: #f5f5f5; }
+
+.ln-dialog__btn--primary {
+    background: #111111;
+    border-color: #000000;
+    color: #ffffff;
+}
+
+.ln-dialog__btn--primary:hover { background: #0f172a; }
+
+.ln-dialog__btn--danger {
+    background: #ef4444;
+    border-color: #b91c1c;
+    color: #ffffff;
+}
+
+.ln-dialog__btn--danger:hover { background: #dc2626; }
+
+/* ── 响应式 ────────────────────────────────────────────── */
+@media (max-width: 480px) {
+    .ln-toast-root {
+        top: 12px;
+        right: 12px;
+        left: 12px;
+        max-width: none;
+    }
+
+    .ln-toast { transform: translateY(-12px); }
+    .ln-toast.ln-in { transform: translateY(0); }
+    .ln-toast.ln-out { opacity: 0; transform: translateY(-12px); }
+
+    .ln-dialog { padding: 18px; }
+
+    .ln-dialog__actions { flex-direction: column-reverse; }
+
+    .ln-dialog__btn { width: 100%; }
+}
+
+/* ── 动效偏好 ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .ln-toast,
+    .ln-dialog-overlay,
+    .ln-dialog {
+        transition: none;
+    }
+}

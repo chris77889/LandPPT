@@ -233,7 +233,7 @@ function saveInitialSlideState(slideIndex, htmlContent) {
 
 // 重置当前幻灯片到初始状态
 async function quickEditReset() {
-    if (!confirm('确定要重置当前幻灯片到初始状态吗？所有编辑将会丢失。')) {
+    if (!(await Notify.confirm('确定要重置当前幻灯片到初始状态吗？所有编辑将会丢失。', { danger: true }))) {
         return;
     }
 

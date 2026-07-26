@@ -131,8 +131,6 @@
     transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     flex-direction: column;
-    resize: horizontal;
-    /* 允许水平调整大小 */
     min-width: 500px;
     /* 最小宽度 */
     max-width: 1000px;
@@ -222,7 +220,7 @@
 }
 
 .ai-sidebar-resize-handle:hover {
-    background: var(--accent-gradient);
+    background: var(--accent-strong);
     opacity: 0.6;
 }
 
@@ -462,17 +460,17 @@
 
 /* 选中图像信息容器样式 */
 .ai-selected-image-container {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    border: 1px solid rgba(79, 172, 254, 0.3);
+    background: var(--surface-muted);
+    border: 1px solid var(--border-color);
     border-radius: var(--border-radius-md);
     margin-bottom: var(--spacing-md);
     overflow: hidden;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
 }
 
 .ai-selected-image-header {
-    background: linear-gradient(135deg, #2d3436 0%, #000000 100%);
+    background: var(--accent-strong);
     color: white;
     padding: var(--spacing-sm) var(--spacing-md);
     display: flex;
@@ -480,7 +478,7 @@
     align-items: center;
     font-size: 0.875rem;
     font-weight: 600;
-    border-bottom: 1px solid rgba(79, 172, 254, 0.2);
+    border-bottom: 1px solid var(--border-color);
 }
 
 .ai-clear-selection-btn {
@@ -505,7 +503,7 @@
     display: flex;
     gap: var(--spacing-md);
     align-items: flex-start;
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--surface-muted);
 }
 
 .ai-selected-image-preview {
@@ -538,12 +536,12 @@
 }
 
 .ai-detail-label {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-muted);
     font-weight: 500;
 }
 
 .ai-detail-value {
-    color: #ffffff;
+    color: var(--text-primary);
     font-weight: 600;
     text-align: right;
     max-width: 120px;
@@ -554,8 +552,8 @@
 
 .ai-image-actions {
     padding: var(--spacing-sm) var(--spacing-md);
-    border-top: 1px solid rgba(79, 172, 254, 0.2);
-    background: rgba(0, 0, 0, 0.3);
+    border-top: 1px solid var(--border-color);
+    background: var(--surface-muted);
 }
 
 .ai-image-action-row {
@@ -593,18 +591,18 @@
 
 .ai-regenerate-image-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(67, 233, 123, 0.3);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
 }
 
 .ai-replace-image-btn {
-    background: linear-gradient(135deg, #2c3e50 0%, #1a252f 100%);
-    border: 1px solid rgba(79, 172, 254, 0.4);
+    background: var(--accent-color);
+    border: 1px solid var(--border-color-strong);
 }
 
 .ai-replace-image-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(44, 62, 80, 0.4);
-    border-color: rgba(79, 172, 254, 0.6);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    border-color: var(--border-color-strong);
 }
 
 .ai-delete-image-btn {
@@ -618,12 +616,12 @@
 }
 
 .ai-upload-local-image-btn {
-    background: linear-gradient(135deg, #f5af19 0%, #f12711 100%);
+    background: var(--accent-color);
 }
 
 .ai-upload-local-image-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(245, 175, 25, 0.3);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
 }
 
 .ai-regenerate-image-btn:active,
@@ -652,8 +650,8 @@
 }
 
 .ai-input-box:focus {
-    border-color: rgba(79, 172, 254, 0.6);
-    box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.2), 0 4px 15px rgba(31, 38, 135, 0.2);
+    border-color: var(--border-color-strong);
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08), 0 4px 15px rgba(0, 0, 0, 0.1);
     transform: translateY(-1px);
 }
 
@@ -670,8 +668,8 @@
 }
 
 .ai-send-btn {
-    background: var(--primary-gradient);
-    color: black;
+    background: var(--accent-strong);
+    color: var(--accent-contrast);
     border: none;
     padding: var(--spacing-sm) var(--spacing-lg);
     border-radius: var(--border-radius-md);
@@ -681,7 +679,7 @@
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     overflow: hidden;
-    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     display: flex;
     align-items: center;
     gap: var(--spacing-xs);
@@ -700,7 +698,7 @@
 
 .ai-send-btn:hover {
     transform: translateY(-2px) scale(1.02);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 
 .ai-send-btn:hover::before {
@@ -785,9 +783,9 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: var(--accent-gradient);
+    background: var(--accent-strong);
     animation: typing 1.4s infinite ease-in-out;
-    box-shadow: 0 2px 4px rgba(79, 172, 254, 0.3);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .ai-typing-indicator span:nth-child(1) {
@@ -870,11 +868,11 @@
 }
 
 .ai-image-upload-btn:hover {
-    background: rgba(79, 172, 254, 0.1);
-    border-color: rgba(79, 172, 254, 0.3);
-    color: rgba(79, 172, 254, 0.8);
+    background: var(--surface-muted);
+    border-color: var(--border-color-strong);
+    color: var(--text-primary);
     transform: translateY(-2px) scale(1.05);
-    box-shadow: 0 4px 15px rgba(79, 172, 254, 0.2);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.12);
 }
 
 .ai-image-upload-btn:hover::before {
@@ -882,9 +880,9 @@
 }
 
 .ai-image-upload-btn.has-images {
-    background: rgba(67, 233, 123, 0.1);
-    border-color: rgba(67, 233, 123, 0.3);
-    color: rgba(67, 233, 123, 0.8);
+    background: var(--surface-muted);
+    border-color: var(--border-color-strong);
+    color: var(--text-primary);
 }
 
 .ai-image-upload-btn.has-images::after {
@@ -892,7 +890,7 @@
     position: absolute;
     top: -6px;
     right: -6px;
-    background: #28a745;
+    background: var(--accent-strong);
     color: white;
     border-radius: 50%;
     width: 18px;
@@ -902,7 +900,7 @@
     align-items: center;
     justify-content: center;
     font-weight: bold;
-    box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 /* AI视觉模式切换按钮样式 */
@@ -939,11 +937,11 @@
 }
 
 .ai-vision-toggle-btn:hover {
-    background: rgba(240, 147, 251, 0.1);
-    border-color: rgba(240, 147, 251, 0.3);
-    color: rgba(240, 147, 251, 0.8);
+    background: var(--surface-muted);
+    border-color: var(--border-color-strong);
+    color: var(--text-primary);
     transform: translateY(-2px) scale(1.05);
-    box-shadow: 0 4px 15px rgba(240, 147, 251, 0.2);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.12);
 }
 
 .ai-vision-toggle-btn:hover::before {
@@ -951,10 +949,10 @@
 }
 
 .ai-vision-toggle-btn.active {
-    background: rgba(67, 233, 123, 0.1);
-    border-color: rgba(67, 233, 123, 0.3);
-    color: rgba(67, 233, 123, 0.8);
-    box-shadow: 0 0 20px rgba(67, 233, 123, 0.3);
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-contrast);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
 }
 
 .ai-vision-toggle-btn.active::after {
@@ -964,7 +962,7 @@
     right: -2px;
     width: 8px;
     height: 8px;
-    background: #43e97b;
+    background: var(--accent-contrast);
     border-radius: 50%;
     animation: pulse 2s infinite;
 }
@@ -972,17 +970,17 @@
 @keyframes pulse {
     0% {
         transform: scale(0.95);
-        box-shadow: 0 0 0 0 rgba(67, 233, 123, 0.7);
+        box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.4);
     }
 
     70% {
         transform: scale(1);
-        box-shadow: 0 0 0 10px rgba(67, 233, 123, 0);
+        box-shadow: 0 0 0 10px rgba(0, 0, 0, 0);
     }
 
     100% {
         transform: scale(0.95);
-        box-shadow: 0 0 0 0 rgba(67, 233, 123, 0);
+        box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
     }
 }
 

@@ -3,7 +3,7 @@
         let projectSlides = {{ project.outline.get('slides', []) | tojson if project.outline else '[]' }};
 
         async function archiveProject() {
-            if (confirm('确定要归档这个项目吗？归档后项目将不会显示在活跃项目列表中。')) {
+            if (await Notify.confirm('确定要归档这个项目吗？归档后项目将不会显示在活跃项目列表中。')) {
                 try {
                     const response = await fetch(`/api/projects/${projectId}/archive`, {
                         method: 'POST',
@@ -13,20 +13,27 @@
                     });
 
                     if (response.ok) {
-                        alert('项目已归档');
+                        await Notify.alert('项目已归档');
                         window.location.href = '/projects';
                     } else {
-                        alert('归档失败，请重试');
+                        Notify.error('归档失败，请重试');
                     }
                 } catch (error) {
                     console.error('Error archiving project:', error);
-                    alert('归档失败: ' + error.message);
+                    Notify.error('归档失败: ' + error.message);
                 }
             }
         }
 
         async function duplicateProject() {
+            const duplicateBtn = document.querySelector('button[onclick="duplicateProject()"]');
             try {
+                // Show loading indicator
+                if (duplicateBtn) {
+                    duplicateBtn.innerHTML = '复制中...';
+                    duplicateBtn.disabled = true;
+                }
+
                 const response = await fetch(`/api/projects/${projectId}/duplicate`, {
                     method: 'POST',
                     headers: {
@@ -40,45 +47,56 @@
                 window.location.href = `/projects/${result.project_id}`;
             } catch (error) {
                 console.error('Error duplicating project:', error);
-                alert('复制项目失败: ' + error.message);
+                Notify.error('复制项目失败: ' + error.message);
+
+                // Restore button state
+                if (duplicateBtn) {
+                    duplicateBtn.innerHTML = '复制项目';
+                    duplicateBtn.disabled = false;
+                }
             }
         }
 
+        let deleteProjectInFlight = false;
         async function deleteProject() {
-            if (confirm('确定要删除这个项目吗？此操作不可撤销！')) {
-                if (confirm('请再次确认删除操作，所有数据将永久丢失！')) {
-                    try {
-                        // Show loading indicator
-                        const deleteBtn = document.querySelector('button[onclick="deleteProject()"]');
-                        const originalText = deleteBtn.innerHTML;
-                        deleteBtn.innerHTML = '删除中...';
-                        deleteBtn.disabled = true;
+            if (deleteProjectInFlight) return;
+            deleteProjectInFlight = true;
+            try {
+                if (!(await Notify.confirm('确定要删除这个项目吗？此操作不可撤销！', { danger: true }))) return;
+                if (!(await Notify.confirm('请再次确认删除操作，所有数据将永久丢失！', { danger: true }))) return;
+                try {
+                    // Show loading indicator
+                    const deleteBtn = document.querySelector('button[onclick="deleteProject()"]');
+                    const originalText = deleteBtn.innerHTML;
+                    deleteBtn.innerHTML = '删除中...';
+                    deleteBtn.disabled = true;
 
-                        const response = await fetch(`/api/database/projects/${projectId}`, {
-                            method: 'DELETE',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            }
-                        });
-
-                        const result = await response.json();
-
-                        if (response.ok) {
-                            alert('项目删除成功！');
-                            window.location.href = '/projects';
-                        } else {
-                            throw new Error(result.detail || '删除失败');
+                    const response = await fetch(`/api/database/projects/${projectId}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Content-Type': 'application/json',
                         }
-                    } catch (error) {
-                        console.error('Error deleting project:', error);
-                        alert('删除失败: ' + error.message);
+                    });
 
-                        // Restore button state
-                        const deleteBtn = document.querySelector('button[onclick="deleteProject()"]');
-                        deleteBtn.innerHTML = '删除项目';
-                        deleteBtn.disabled = false;
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        await Notify.alert('项目删除成功！');
+                        window.location.href = '/projects';
+                    } else {
+                        throw new Error(result.detail || '删除失败');
                     }
+                } catch (error) {
+                    console.error('Error deleting project:', error);
+                    Notify.error('删除失败: ' + error.message);
+
+                    // Restore button state
+                    const deleteBtn = document.querySelector('button[onclick="deleteProject()"]');
+                    deleteBtn.innerHTML = '删除项目';
+                    deleteBtn.disabled = false;
                 }
+            } finally {
+                deleteProjectInFlight = false;
             }
         }
 
@@ -149,18 +167,21 @@
         async function deleteOutlineSlide(slideIndex) {
             if (!projectOutline || !Array.isArray(projectOutline.slides)) return;
             if (projectOutline.slides.length <= 1) {
-                alert('至少保留一页幻灯片');
+                Notify.warning('至少保留一页幻灯片');
                 return;
             }
-            if (!confirm(`确定删除第 ${slideIndex + 1} 页大纲吗？对应幻灯片也会同步删除。`)) {
+            if (!(await Notify.confirm(`确定删除第 ${slideIndex + 1} 页大纲吗？对应幻灯片也会同步删除。`, { danger: true }))) {
                 return;
             }
+            const removed = projectOutline.slides.splice(slideIndex, 1)[0];
             try {
-                projectOutline.slides.splice(slideIndex, 1);
                 await persistProjectOutline({ type: 'delete', slide_index: slideIndex });
                 window.location.reload();
             } catch (error) {
-                alert('删除大纲失败: ' + error.message);
+                // 保存失败时回滚内存中的大纲，避免与页面渲染的索引不一致
+                projectOutline.slides.splice(slideIndex, 0, removed);
+                renumberProjectOutlineSlides();
+                Notify.error('删除大纲失败: ' + error.message);
             }
         }
 
@@ -177,7 +198,11 @@
                 await persistProjectOutline({ type: 'move', slide_index: fromIndex, to_index: toIndex });
                 window.location.reload();
             } catch (error) {
-                alert('调整大纲顺序失败: ' + error.message);
+                // 保存失败时回滚内存中的大纲，避免与页面渲染的索引不一致
+                projectOutline.slides.splice(toIndex, 1);
+                projectOutline.slides.splice(fromIndex, 0, moved);
+                renumberProjectOutlineSlides();
+                Notify.error('调整大纲顺序失败: ' + error.message);
             }
         }
 
@@ -247,7 +272,7 @@
             content.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
             <h3 style="color: #2c3e50; margin: 0;">第${slide.page_number || slideIndex + 1}页详情</h3>
-            <button onclick="this.closest('.modal').remove()" style="background: #e74c3c; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
+            <button type="button" class="modal-close-button" onclick="this.closest('.modal').remove()" aria-label="关闭">×</button>
         </div>
         <h4 style="color: #3498db; margin-bottom: 10px;">${slide.title || '未命名幻灯片'}</h4>
         ${slide.subtitle ? `<p style="color: #7f8c8d; font-style: italic; margin-bottom: 15px;">${slide.subtitle}</p>` : ''}
@@ -270,7 +295,7 @@
         // 编辑大纲
         function editOutline() {
             if (!projectOutline) {
-                alert('大纲数据不存在，无法编辑');
+                Notify.warning('大纲数据不存在，无法编辑');
                 return;
             }
 
@@ -328,18 +353,20 @@
                 });
 
                 if (response.ok) {
-                    alert('大纲修改成功！');
-                    window.location.reload();
+                    // 先关闭编辑弹窗，避免刷新前的窗口期里重复提交或触发优化大纲
+                    document.querySelector('.modal')?.remove();
+                    Notify.success('大纲修改成功');
+                    setTimeout(() => window.location.reload(), 1200);
                 } else {
                     const error = await response.json();
-                    alert('保存失败: ' + (error.detail || '未知错误'));
+                    Notify.error('保存失败: ' + (error.detail || '未知错误'));
                 }
             } catch (error) {
                 if (error instanceof SyntaxError) {
-                    alert('JSON格式错误，请检查语法！');
+                    Notify.error('JSON格式错误，请检查语法！');
                 } else {
                     console.error('Error saving outline:', error);
-                    alert('保存失败: ' + error.message);
+                    Notify.error('保存失败: ' + error.message);
                 }
             }
         }
@@ -347,7 +374,7 @@
         // 导出大纲为JSON文件
         function exportOutlineJSON() {
             if (!projectOutline) {
-                alert('大纲数据不存在，无法导出');
+                Notify.warning('大纲数据不存在，无法导出');
                 return;
             }
 
@@ -381,7 +408,7 @@
         // 编辑单页幻灯片
         function editSingleSlide(slideIndex) {
             if (!projectSlides || !projectSlides[slideIndex]) {
-                alert('幻灯片不存在');
+                Notify.warning('幻灯片不存在');
                 return;
             }
 
@@ -490,13 +517,19 @@
 
             if (!container) {
                 console.error('找不到内容要点容器');
-                alert('无法找到内容要点容器，请刷新页面重试');
+                Notify.warning('无法找到内容要点容器，请刷新页面重试');
                 return;
             }
 
-            // 计算当前要点数量
+            // 取现有最大编号+1，避免删除中间要点后新增要点的id重复
             const existingPoints = document.querySelectorAll('input[id^="point_"]');
-            const pointIndex = existingPoints.length;
+            let pointIndex = 0;
+            existingPoints.forEach(input => {
+                const idx = Number.parseInt(input.id.slice('point_'.length), 10);
+                if (Number.isInteger(idx) && idx >= pointIndex) {
+                    pointIndex = idx + 1;
+                }
+            });
 
             const pointDiv = document.createElement('div');
             pointDiv.style.cssText = 'display: flex; align-items: center; margin-bottom: 8px;';
@@ -537,7 +570,7 @@
                 });
 
                 if (!title) {
-                    alert('请输入幻灯片标题');
+                    Notify.warning('请输入幻灯片标题');
                     return;
                 }
 
@@ -556,7 +589,7 @@
 
                 // 更新大纲中的幻灯片
                 if (!projectOutline) {
-                    alert('大纲数据不存在，无法保存修改');
+                    Notify.warning('大纲数据不存在，无法保存修改');
                     return;
                 }
                 const updatedOutline = { ...projectOutline };
@@ -593,16 +626,16 @@
                     }, 2000);
                 } else {
                     const error = await response.json();
-                    alert('保存失败: ' + (error.detail || '未知错误'));
+                    Notify.error('保存失败: ' + (error.detail || '未知错误'));
                 }
             } catch (error) {
                 console.error('Error saving slide changes:', error);
-                alert('保存失败: ' + error.message);
+                Notify.error('保存失败: ' + error.message);
             }
         }
 
         async function restoreVersion(version) {
-            if (confirm(`确定要恢复到版本 v${version} 吗？当前未保存的更改将丢失。`)) {
+            if (await Notify.confirm(`确定要恢复到版本 v${version} 吗？当前未保存的更改将丢失。`, { danger: true })) {
                 try {
                     const response = await fetch(`/api/projects/${projectId}/versions/${version}/restore`, {
                         method: 'POST',
@@ -612,14 +645,14 @@
                     });
 
                     if (response.ok) {
-                        alert('版本恢复成功');
+                        await Notify.alert('版本恢复成功');
                         window.location.reload();
                     } else {
-                        alert('版本恢复失败，请重试');
+                        Notify.error('版本恢复失败，请重试');
                     }
                 } catch (error) {
                     console.error('Error restoring version:', error);
-                    alert('版本恢复失败: ' + error.message);
+                    Notify.error('版本恢复失败: ' + error.message);
                 }
             }
         }
@@ -978,7 +1011,7 @@
         async function aiOptimizeFullOutlineInProjectDetail() {
             const editor = document.getElementById('outlineEditor');
             if (!editor || !editor.value) {
-                alert('请先输入大纲JSON内容');
+                Notify.warning('请先输入大纲JSON内容');
                 return;
             }
 
@@ -987,7 +1020,7 @@
             try {
                 parsedOutline = JSON.parse(editor.value);
             } catch (e) {
-                alert('JSON格式错误，请先修正格式后再进行AI优化');
+                Notify.error('JSON格式错误，请先修正格式后再进行AI优化');
                 return;
             }
 
@@ -1018,7 +1051,7 @@
             const loadingToast = document.createElement('div');
             loadingToast.id = 'ai-optimize-loading';
             loadingToast.style.cssText = `
-        position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg, #667eea, #764ba2);
+        position: fixed; top: 20px; right: 20px; background: var(--surface-contrast);
         color: white; padding: 15px 20px; border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 10001;
         font-size: 14px; font-weight: bold;
@@ -1078,14 +1111,14 @@
                     if (result.raw_response) {
                         console.error('AI原始响应:', result.raw_response);
                     }
-                    alert('AI优化失败:\n' + errorMsg);
+                    Notify.error('AI优化失败:\n' + errorMsg);
                 }
 
             } catch (error) {
                 console.error('AI优化失败:', error);
                 const loadingToast = document.getElementById('ai-optimize-loading');
                 if (loadingToast) loadingToast.remove();
-                alert('AI优化失败: ' + error.message);
+                Notify.error('AI优化失败: ' + error.message);
             }
         }
 
@@ -1103,7 +1136,7 @@
                 .filter(point => point.length > 0);
 
             if (!title) {
-                alert('请先输入页面标题');
+                Notify.warning('请先输入页面标题');
                 return;
             }
 
@@ -1134,7 +1167,7 @@
             const loadingToast = document.createElement('div');
             loadingToast.id = 'ai-optimize-loading';
             loadingToast.style.cssText = `
-        position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg, #667eea, #764ba2);
+        position: fixed; top: 20px; right: 20px; background: var(--surface-contrast);
         color: white; padding: 15px 20px; border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 10001;
         font-size: 14px; font-weight: bold;
@@ -1225,14 +1258,14 @@
                     if (result.raw_response) {
                         console.error('AI原始响应:', result.raw_response);
                     }
-                    alert('AI优化失败:\n' + errorMsg);
+                    Notify.error('AI优化失败:\n' + errorMsg);
                 }
 
             } catch (error) {
                 console.error('AI优化失败:', error);
                 const loadingToast = document.getElementById('ai-optimize-loading');
                 if (loadingToast) loadingToast.remove();
-                alert('AI优化失败: ' + error.message);
+                Notify.error('AI优化失败: ' + error.message);
             }
         }
 

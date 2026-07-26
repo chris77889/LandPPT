@@ -291,9 +291,14 @@
         transition: all 0.2s;
     }
 
-    .pagination button:hover {
+    .pagination button:not(:disabled):hover {
         transform: translateY(-1px);
         border-color: rgba(17, 24, 39, 0.35);
+    }
+
+    .pagination button:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
     }
 
     .pagination button.active {
@@ -383,7 +388,7 @@
                 <strong id="checkinTitle">签到后可领取积分奖励</strong>
                 <div class="muted" id="checkinDesc">正在获取签到规则...</div>
             </div>
-            <button class="btn" type="button" id="checkinBtn">
+            <button class="btn btn-primary" type="button" id="checkinBtn" disabled>
                 <i class="fas fa-hand-sparkles"></i> 立即签到
             </button>
         </div>
@@ -396,8 +401,8 @@
             </div>
             <div class="credits-section-body">
                 <form class="redeem-form" id="redeemForm">
-                    <input id="redeemCode" type="text" placeholder="输入兑换码" autocomplete="off">
-                    <button class="btn" type="submit"><i class="fas fa-bolt"></i> 立即兑换</button>
+                    <input id="redeemCode" type="text" placeholder="输入兑换码" aria-label="兑换码" autocomplete="off">
+                    <button class="btn btn-primary" type="submit"><i class="fas fa-bolt"></i> 立即兑换</button>
                 </form>
                 <div class="muted" style="margin-top:10px;">
                     兑换码不区分大小写；兑换成功后余额将自动更新。
@@ -449,16 +454,23 @@
     let currentPage = 1;
     const pageSize = 20;
 
+    let alertTimer = null;
+
     function showAlert(message, type = 'success') {
         const area = document.getElementById('alertArea');
         area.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
-        setTimeout(() => area.innerHTML = '', 5000);
+        clearTimeout(alertTimer);
+        alertTimer = setTimeout(() => area.innerHTML = '', 5000);
     }
 
     async function loadStats() {
         try {
             const res = await fetch('/credits/api/balance');
             const data = await res.json();
+            if (!res.ok) {
+                showAlert(data.detail || '加载积分统计失败', 'error');
+                return;
+            }
             document.getElementById('balance').textContent = data.balance;
             document.getElementById('consumed').textContent = data.total_consumed;
             document.getElementById('recharged').textContent = data.total_recharged;
@@ -538,7 +550,7 @@
         };
 
         const addEllipsis = () => {
-            parts.push('<button disabled style="opacity:.6; cursor:default;">...</button>');
+            parts.push('<button disabled>...</button>');
         };
 
         // Prev
@@ -608,6 +620,10 @@
         const code = document.getElementById('redeemCode').value.trim();
         if (!code) return;
 
+        const btn = e.target.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 兑换中...';
+
         try {
             const res = await fetch('/credits/api/redeem', {
                 method: 'POST',
@@ -623,10 +639,18 @@
             loadTransactions(1);
         } catch (e) {
             showAlert(e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-bolt"></i> 立即兑换';
         }
     };
 
     document.getElementById('checkinBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('checkinBtn');
+        const previousContent = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 签到中...';
+
         try {
             const res = await fetch('/credits/api/checkin', {
                 method: 'POST'
@@ -634,11 +658,14 @@
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || '签到失败');
 
+            btn.innerHTML = '<i class="fas fa-check"></i> 今日已签到';
             showAlert(data.message, 'success');
             loadStats();
             loadTransactions(1);
             loadCheckinStatus();
         } catch (e) {
+            btn.disabled = false;
+            btn.innerHTML = previousContent;
             showAlert(e.message, 'error');
             loadCheckinStatus();
         }

@@ -683,16 +683,19 @@ function stopDrag(e) {
 }
 
 // 删除元素
-function quickEditDelete() {
+async function quickEditDelete() {
     if (!selectedQuickEditElement) {
         showToolbarStatus('请先选择要删除的元素', 'warning');
         return;
     }
 
-    if (confirm('确定要删除此元素吗？')) {
+    const target = selectedQuickEditElement;
+    if (await Notify.confirm('确定要删除此元素吗？', { danger: true })) {
+        // 等待确认期间选中元素可能已被删除或变更，重新校验
+        if (!target.isConnected) return;
         saveStateForUndo();
-        selectedQuickEditElement.remove();
-        selectedQuickEditElement = null;
+        target.remove();
+        if (selectedQuickEditElement === target) selectedQuickEditElement = null;
         saveQuickEditChanges();
         showToolbarStatus('元素已删除', 'success');
     }

@@ -620,13 +620,13 @@
 
 
 
-        function removeCurrentImage() {
+        async function removeCurrentImage() {
             if (!currentPreviewImage) return;
 
             if (window.currentPreviewOwner === 'native_dialog') {
                 const idx = Number(window.currentPreviewNativeIndex);
                 if (Number.isInteger(idx) && idx >= 0) {
-                    if (confirm(`确定要移除图片 "${currentPreviewImage.name}" 吗？`)) {
+                    if (await Notify.confirm(`确定要移除图片 "${currentPreviewImage.name}" 吗？`, { danger: true })) {
                         removeNativeUploadedImage(idx);
                         closeImagePreview();
                     }
@@ -636,7 +636,7 @@
 
             const index = uploadedImages.findIndex(img => img.id === currentPreviewImage.id);
             if (index !== -1) {
-                if (confirm(`确定要删除图片 "${currentPreviewImage.name}" 吗？`)) {
+                if (await Notify.confirm(`确定要删除图片 "${currentPreviewImage.name}" 吗？`, { danger: true })) {
                     removeUploadedImage(index);
                     closeImagePreview();
                 }

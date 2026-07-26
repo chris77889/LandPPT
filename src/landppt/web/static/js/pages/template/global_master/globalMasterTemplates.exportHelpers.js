@@ -104,105 +104,6 @@ function ensureHtmlDocument(htmlTemplate) {
     return html;
 }
 
-function buildTemplatePptxSampleSlides(templateName, includeTransition = false) {
-    const slides = [
-        {
-            kind: 'title',
-            pageTitle: `${templateName} 模板预览`,
-            mainHeading: `${templateName} 标题页`,
-            subtitle: 'PPTX模板导出示例',
-            pageContent: `
-                <div style="display:flex;flex-direction:column;gap:14px;">
-                    <div style="font-size:1.15em;font-weight:600;">标题页 / Cover Slide</div>
-                    <div>用于展示主题、副标题、演讲人信息与日期。</div>
-                    <div style="opacity:.85;">导出时间：${new Date().toLocaleString()}</div>
-                </div>
-            `,
-            notes: '标题页模板（封面页）'
-        },
-        {
-            kind: 'agenda',
-            pageTitle: '目录页',
-            mainHeading: '目录页',
-            subtitle: 'Agenda / 目录结构',
-            pageContent: `
-                <div style="display:flex;flex-direction:column;gap:12px;">
-                    <div style="font-weight:600;">本模板目录页示例</div>
-                    <ol style="margin:0;padding-left:1.4em;line-height:1.8;">
-                        <li>项目背景与目标</li>
-                        <li>现状分析与关键发现</li>
-                        <li>方案设计与实施路径</li>
-                        <li>结果评估与总结建议</li>
-                    </ol>
-                </div>
-            `,
-            notes: '目录页模板（agenda）'
-        }
-    ];
-
-    if (includeTransition) {
-        slides.push({
-            kind: 'transition',
-            pageTitle: '过渡页',
-            mainHeading: '章节过渡页',
-            subtitle: 'Transition Slide',
-            pageContent: `
-                <div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:1.25em;font-weight:700;">
-                    第二部分 · 方案设计与执行路径
-                </div>
-            `,
-            notes: '过渡页模板（可选）'
-        });
-    }
-
-    slides.push(
-        {
-            kind: 'content',
-            pageTitle: '内容页',
-            mainHeading: '内容页示例',
-            subtitle: 'Content Slide',
-            pageContent: `
-                <div style="display:grid;grid-template-columns:1.2fr .8fr;gap:16px;align-items:start;">
-                    <div>
-                        <div style="font-weight:600;margin-bottom:8px;">核心结论</div>
-                        <ul style="margin:0;padding-left:1.2em;line-height:1.7;">
-                            <li>建议采用分阶段推进策略，先验证后扩展。</li>
-                            <li>通过标准化模板降低设计与制作成本。</li>
-                            <li>统一视觉规范，提升输出一致性与品牌感。</li>
-                        </ul>
-                    </div>
-                    <div style="border:1px dashed rgba(128,128,128,.45);border-radius:12px;padding:12px;">
-                        <div style="font-weight:600;margin-bottom:6px;">数据占位区</div>
-                        <div style="opacity:.85;font-size:.95em;line-height:1.6;">
-                            可替换为图表、指标卡片、流程图或图片内容。
-                        </div>
-                    </div>
-                </div>
-            `,
-            notes: '内容页模板（content）'
-        },
-        {
-            kind: 'summary',
-            pageTitle: '总结页',
-            mainHeading: '总结与下一步',
-            subtitle: 'Summary / Conclusion',
-            pageContent: `
-                <div style="display:flex;flex-direction:column;gap:12px;">
-                    <div style="font-weight:600;">总结页示例</div>
-                    <ul style="margin:0;padding-left:1.2em;line-height:1.8;">
-                        <li>模板结构已覆盖标题页、目录页、内容页、总结页。</li>
-                        <li>可选增加过渡页，适配章节型汇报场景。</li>
-                        <li>建议后续补充图表页、数据看板页等扩展版式。</li>
-                    </ul>
-                </div>
-            `,
-            notes: '总结页模板（conclusion / summary）'
-        }
-    );
-
-    return slides;
-}
-
 function replaceTemplatePlaceholders(htmlTemplate, variables) {
     const aliasMap = {
         page_title: ['page_title', 'title', 'slide_title', 'topic_title'],
@@ -391,7 +292,6 @@ export {
     loadDomToPptxBundle,
     ensureDomToPptxReady,
     ensureHtmlDocument,
-    buildTemplatePptxSampleSlides,
     replaceTemplatePlaceholders,
     renderTemplateSampleHtml,
     loadHtmlIntoIframe,

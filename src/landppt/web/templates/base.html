@@ -9,6 +9,7 @@
     <link rel="alternate icon" href="/favicon.ico">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/shared/site_notice.css">
+    <link rel="stylesheet" href="/static/css/shared/notify.css">
     <style>
         @import url('https://fonts.loli.net/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
@@ -142,7 +143,11 @@
         .nav-user a {
             padding: var(--spacing-sm) var(--spacing-sm);
             font-size: 0.85rem;
-            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .nav a.nav-admin {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: rgba(239, 68, 68, 0.3);
         }
 
         .nav a:hover {
@@ -151,10 +156,6 @@
             border-color: var(--surface-contrast);
             transform: translateY(-2px);
             box-shadow: var(--shadow-soft);
-        }
-
-        .nav a:hover::before {
-            left: 0;
         }
 
         .nav a:active {
@@ -251,10 +252,8 @@
         .form-group textarea:focus,
         .form-group select:focus {
             outline: none;
-            border-color: rgba(102, 126, 234, 0.5);
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-            transform: translateY(-2px);
-            background: rgba(255, 255, 255, 0.4);
+            border-color: var(--ink-strong);
+            box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.08);
         }
 
         .form-group input::placeholder,
@@ -311,31 +310,6 @@
             grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
         }
 
-        /* Floating Action Button */
-        .fab {
-            position: fixed;
-            bottom: var(--spacing-xl);
-            right: var(--spacing-xl);
-            width: 60px;
-            height: 60px;
-            background: var(--surface-contrast);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 1.5rem;
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.18);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            cursor: pointer;
-            z-index: 1000;
-        }
-
-        .fab:hover {
-            transform: scale(1.05) translateY(-2px);
-            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.22);
-        }
-
         .btn {
             display: inline-flex;
             align-items: center;
@@ -345,6 +319,9 @@
             border: 1px solid var(--border-color);
             background: var(--surface);
             color: var(--ink);
+            font-family: inherit;
+            font-size: 1rem;
+            line-height: 1.6;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s ease;
@@ -395,20 +372,8 @@
             font-size: 0.85rem;
         }
 
-        /* Override fab styles for footer github icon */
         .footer-github-icon {
-            position: static !important;
-            width: auto !important;
-            height: auto !important;
-            background: none !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-            transform: none !important;
-            z-index: auto !important;
-            bottom: auto !important;
-            right: auto !important;
-            display: inline !important;
-            color: var(--glass-text);
+            color: inherit;
         }
 
         @media (max-width: 1200px) {
@@ -482,7 +447,7 @@
             <nav class="nav">
                 <div class="nav-main">
                     <a href="/home"><i class="fas fa-home"></i> 首页</a>
-                    <a href="/scenarios"><i class="fas fa-list-alt"></i> 场景选择</a>
+                    <a href="/create"><i class="fas fa-wand-magic-sparkles"></i> 创建 PPT</a>
                     <a href="/projects"><i class="fas fa-chart-bar"></i> 项目列表</a>
                     <a href="/dashboard"><i class="fas fa-tachometer-alt"></i> 项目仪表板</a>
                     <a href="/global-master-templates"><i class="fas fa-palette"></i> 模板管理</a>
@@ -499,15 +464,14 @@
                     </a>
                     {% endif %}
                     {% if current_user and current_user.is_admin %}
-                    <a href="/admin" title="管理后台"
-                        style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3);">
+                    <a href="/admin" title="管理后台" class="nav-admin">
                         <i class="fas fa-cog"></i> 管理
                     </a>
                     {% endif %}
                     <a href="/auth/profile" title="个人资料">
                         <i class="fas fa-user"></i> 个人资料
                     </a>
-                    <a href="/auth/logout" title="退出登录" onclick="return confirm('确定要退出登录吗？')">
+                    <a href="/auth/logout" title="退出登录" id="navLogoutLink">
                         <i class="fas fa-sign-out-alt"></i> 退出
                     </a>
                 </div>
@@ -548,11 +512,19 @@
         </footer>
     </div>
 
+    <script src="/static/js/shared/notify.js?v=20260726"></script>
     <script src="/static/js/shared/site_notice.js?v=20260322"></script>
     <script>
         window.SiteNotice?.loadPublicSettings({
             noticeContainer: 'globalSiteNotice',
             sponsorLink: 'footerSponsorLink',
+        });
+        document.getElementById('navLogoutLink')?.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const href = e.currentTarget.href;
+            if (await Notify.confirm('确定要退出登录吗？')) {
+                window.location.href = href;
+            }
         });
     </script>
     {% block extra_js %}{% endblock %}

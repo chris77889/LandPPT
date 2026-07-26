@@ -86,31 +86,6 @@
     margin-top: 15px;
 }
 
-.btn {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 0.9em;
-}
-
-.btn-primary {
-    background: #007bff;
-    color: white;
-}
-
-.btn-danger {
-    background: #dc3545;
-    color: white;
-}
-
-.btn-secondary {
-    background: #6c757d;
-    color: white;
-}
-
 .loading {
     text-align: center;
     padding: 40px;
@@ -176,7 +151,7 @@
         </p>
         
         <div style="display: flex; gap: 10px; align-items: center;">
-            <input type="text" id="test-topic" placeholder="例如：人工智能发展趋势" 
+            <input type="text" id="test-topic" placeholder="例如：人工智能发展趋势" aria-label="研究主题"
                    style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
             <button onclick="testResearch()" class="btn btn-primary" id="test-btn">
                 开始研究
@@ -286,7 +261,7 @@ async function loadReportsList() {
 async function testResearch() {
     const topic = document.getElementById('test-topic').value.trim();
     if (!topic) {
-        alert('请输入研究主题');
+        Notify.warning('请输入研究主题');
         return;
     }
     
@@ -345,25 +320,25 @@ async function testResearch() {
 }
 
 async function deleteReport(filename) {
-    if (!confirm(`确定要删除报告 "${filename}" 吗？`)) {
+    if (!(await Notify.confirm(`确定要删除报告 "${filename}" 吗？`, { danger: true }))) {
         return;
     }
-    
+
     try {
         const response = await fetch(`/api/research/reports/${encodeURIComponent(filename)}`, {
             method: 'DELETE'
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
-            alert('报告删除成功');
+            Notify.success('报告删除成功');
             loadReportsList();
         } else {
             throw new Error(data.message || '删除失败');
         }
     } catch (error) {
-        alert(`删除报告失败: ${error.message}`);
+        Notify.error(`删除报告失败: ${error.message}`);
     }
 }
 </script>

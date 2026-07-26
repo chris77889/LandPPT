@@ -68,19 +68,33 @@ function initImageUpload() {
         removePptxBtn.addEventListener('click', clearUploadedPptx);
     }
     if (dropzone) {
+        if (fileInput) {
+            dropzone.addEventListener('click', (e) => {
+                if (e.target.closest('button, input')) return;
+                fileInput.click();
+            });
+        }
         dropzone.addEventListener('dragover', (e) => {
             e.preventDefault();
-            dropzone.classList.add('drag-over');
+            dropzone.classList.add('dragover');
         });
         dropzone.addEventListener('dragleave', (e) => {
             e.preventDefault();
-            dropzone.classList.remove('drag-over');
+            dropzone.classList.remove('dragover');
         });
         dropzone.addEventListener('drop', (e) => {
             e.preventDefault();
-            dropzone.classList.remove('drag-over');
+            dropzone.classList.remove('dragover');
             const files = e.dataTransfer?.files;
             if (files && files.length > 0) handleImageFiles(files);
+        });
+    }
+
+    const pptxDropzone = pptxUploadArea?.querySelector('.upload-dropzone');
+    if (pptxDropzone && pptxFileInput) {
+        pptxDropzone.addEventListener('click', (e) => {
+            if (e.target.closest('button, input')) return;
+            pptxFileInput.click();
         });
     }
 }
@@ -93,19 +107,19 @@ function handleImageFiles(fileList) {
     const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
     console.log('[upload] image files after filter:', files.length);
     if (files.length === 0) {
-        alert('请上传图片文件');
+        Notify.warning('请上传图片文件');
         return;
     }
     const remaining = MAX_IMAGES - state.uploadedImages.length;
     if (remaining <= 0) {
-        alert(`最多上传 ${MAX_IMAGES} 张参考图片`);
+        Notify.warning(`最多上传 ${MAX_IMAGES} 张参考图片`);
         return;
     }
     const toAdd = files.slice(0, remaining);
     let loaded = 0;
     toAdd.forEach((file) => {
         if (file.size > 10 * 1024 * 1024) {
-            alert(`图片 ${file.name} 超过 10MB，已跳过`);
+            Notify.warning(`图片 ${file.name} 超过 10MB，已跳过`);
             loaded++;
             if (loaded >= toAdd.length) refreshImagePreview();
             return;
@@ -133,11 +147,11 @@ function handlePptxFile(file) {
     const lowerName = String(file?.name || '').toLowerCase();
     const isPptxMime = file?.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
     if (!lowerName.endsWith('.pptx') && !isPptxMime) {
-        alert('请上传 .pptx 文件');
+        Notify.warning('请上传 .pptx 文件');
         return;
     }
     if (file.size > 50 * 1024 * 1024) {
-        alert('PPTX 文件过大，请控制在 50MB 以内');
+        Notify.warning('PPTX 文件过大，请控制在 50MB 以内');
         return;
     }
 
@@ -151,7 +165,7 @@ function handlePptxFile(file) {
         };
         showPptxPreview();
     };
-    reader.onerror = () => alert('读取 PPTX 文件失败');
+    reader.onerror = () => Notify.error('读取 PPTX 文件失败');
     reader.readAsDataURL(file);
 }
 
@@ -271,10 +285,10 @@ async function handleTemplateImport(event) {
         await apiClient.post('/api/global-master-templates/', templateData);
         event.target.value = '';
         loadTemplates(1);
-        alert('模板导入成功');
+        Notify.success('模板导入成功');
     } catch (error) {
         console.error('导入失败', error);
-        alert('导入模板失败: ' + error.message);
+        Notify.error('导入模板失败: ' + error.message);
         event.target.value = '';
     }
 }

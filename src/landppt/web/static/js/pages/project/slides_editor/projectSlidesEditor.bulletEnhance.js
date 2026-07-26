@@ -190,7 +190,7 @@
                     }
                 </style>
                 <h4 style="margin: 0 0 25px 0; color: #2c3e50; display: flex; align-items: center; gap: 10px;">
-                    <span style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 16px;">🪄</span>
+                    <span style="background: #111214; color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 16px;">🪄</span>
                     AI要点增强结果 (共 ${maxLength} 个要点)
                 </h4>
 
@@ -451,7 +451,7 @@
         }
 
         // 删除要点功能
-        function deleteBulletPoint(pointIndex) {
+        async function deleteBulletPoint(pointIndex) {
             const bulletPointItem = document.querySelector(`.bullet-point-item[data-index="${pointIndex}"]`);
             if (!bulletPointItem) return;
 
@@ -460,7 +460,7 @@
                 `确定要删除要点"${pointText.substring(0, 30)}${pointText.length > 30 ? '...' : ''}"吗？` :
                 '确定要删除这个要点吗？';
 
-            if (confirm(confirmMessage)) {
+            if (await Notify.confirm(confirmMessage, { danger: true })) {
                 bulletPointItem.remove();
 
                 // 重新编号剩余要点

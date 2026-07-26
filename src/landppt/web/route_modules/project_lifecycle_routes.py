@@ -5,36 +5,49 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ...api.models import PPTGenerationRequest
 from ...auth.middleware import get_current_user_required
 from ...database.models import User
+from .outline_support import (
+    _normalize_content_source_urls,
+    _save_uploaded_files_for_confirmed_requirements,
+)
 from .support import get_ppt_service_for_user, ppt_service, templates
 
 router = APIRouter()
 
+SCENARIOS = [
+    {"id": "general", "name": "通用", "description": "适用于各类通用场景的 PPT 模板", "icon": "📚"},
+    {"id": "tourism", "name": "旅游观光", "description": "旅游线路、景点介绍等旅游相关 PPT", "icon": "🗺️"},
+    {"id": "education", "name": "儿童科普", "description": "适合儿童的科普教育类 PPT", "icon": "🎓"},
+    {"id": "analysis", "name": "深入分析", "description": "数据分析、研究报告等深度分析 PPT", "icon": "📊"},
+    {"id": "history", "name": "历史文化", "description": "历史事件、文化介绍等人文类 PPT", "icon": "🏛️"},
+    {"id": "technology", "name": "科技技术", "description": "技术介绍、产品发布等科技类 PPT", "icon": "💻"},
+    {"id": "business", "name": "方案汇报", "description": "商业计划、项目汇报等商务 PPT", "icon": "💼"},
+]
+
 
 @router.get("/scenarios", response_class=HTMLResponse)
+@router.get("/create", response_class=HTMLResponse)
 async def web_scenarios(
     request: Request,
+    scenario: str = "general",
     user: User = Depends(get_current_user_required),
 ):
-    """场景选择页面。"""
-    scenarios = [
-        {"id": "general", "name": "通用", "description": "适用于各类通用场景的 PPT 模板", "icon": "📚"},
-        {"id": "tourism", "name": "旅游观光", "description": "旅游线路、景点介绍等旅游相关 PPT", "icon": "🗺️"},
-        {"id": "education", "name": "儿童科普", "description": "适合儿童的科普教育类 PPT", "icon": "🎓"},
-        {"id": "analysis", "name": "深入分析", "description": "数据分析、研究报告等深度分析 PPT", "icon": "📊"},
-        {"id": "history", "name": "历史文化", "description": "历史事件、文化介绍等人文类 PPT", "icon": "🏛️"},
-        {"id": "technology", "name": "科技技术", "description": "技术介绍、产品发布等科技类 PPT", "icon": "💻"},
-        {"id": "business", "name": "方案汇报", "description": "商业计划、项目汇报等商务 PPT", "icon": "💼"},
-    ]
+    """一步式 PPT 创建页面（主题、需求与全部生成参数合并在同一个输入区）。"""
+    valid_ids = {item["id"] for item in SCENARIOS}
     return templates.TemplateResponse(
         "pages/project/scenarios.html",
-        {"request": request, "scenarios": scenarios},
+        {
+            "request": request,
+            "scenarios": SCENARIOS,
+            "selected_scenario": scenario if scenario in valid_ids else "general",
+        },
     )
 
 
@@ -151,6 +164,125 @@ async def web_create_project(
         return RedirectResponse(url=f"/projects/{project.project_id}/todo", status_code=302)
     except Exception as exc:
         return templates.TemplateResponse("error.html", {"request": request, "error": str(exc)})
+
+
+@router.post("/projects/create-and-confirm")
+async def web_create_project_and_confirm(
+    request: Request,
+    scenario: str = Form("general"),
+    topic: str = Form(...),
+    requirements: str = Form(None),
+    language: str = Form("zh"),
+    network_mode: bool = Form(False),
+    audience_type: str = Form("普通大众"),
+    custom_audience: str = Form(None),
+    page_count_mode: str = Form("ai_decide"),
+    min_pages: int = Form(8),
+    max_pages: int = Form(15),
+    fixed_pages: int = Form(10),
+    include_transition_pages: bool = Form(False),
+    include_page_numbers: bool = Form(True),
+    ppt_style: str = Form("general"),
+    custom_style_prompt: str = Form(None),
+    description: str = Form(None),
+    content_source: str = Form("manual"),
+    file_upload: List[UploadFile] = File(None),
+    content_urls: str = Form(None),
+    file_processing_mode: str = Form("markitdown"),
+    content_analysis_depth: str = Form("fast"),
+    user: User = Depends(get_current_user_required),
+):
+    """一步式创建项目并确认需求，直接进入大纲生成阶段。"""
+    project_id: str | None = None
+    try:
+        topic = (topic or "").strip()
+        if not topic:
+            raise ValueError("请填写 PPT 主题")
+
+        # 先处理内容来源，避免在素材无效时留下一个无法继续的空项目
+        source_urls: List[str] = []
+        saved_file_metadata: Dict[str, Any] = {}
+        if content_source == "file":
+            saved_file_metadata = await _save_uploaded_files_for_confirmed_requirements(file_upload or [])
+        elif content_source == "url":
+            source_urls = _normalize_content_source_urls(content_urls)
+            if not source_urls:
+                raise ValueError("请至少提供一个有效 URL（http/https）")
+
+        requirements = (requirements or "").strip() or None
+        custom_audience = (custom_audience or "").strip() or None
+        custom_style_prompt = (custom_style_prompt or "").strip() or None
+        target_audience = custom_audience if audience_type == "自定义" and custom_audience else audience_type
+
+        project_request = PPTGenerationRequest(
+            scenario=scenario,
+            topic=topic,
+            requirements=requirements,
+            network_mode=network_mode,
+            language=language,
+            target_audience=target_audience,
+            custom_audience=custom_audience,
+            ppt_style=ppt_style,
+            custom_style_prompt=custom_style_prompt,
+            include_transition_pages=include_transition_pages,
+            description=description,
+            use_file_content=content_source in ("file", "url"),
+            file_processing_mode=file_processing_mode,
+            content_analysis_depth=content_analysis_depth,
+            user_id=user.id,
+        )
+        project = await ppt_service.project_manager.create_project(project_request)
+        project_id = project.project_id
+        await ppt_service.project_manager.update_project_status(project_id, "in_progress")
+
+        page_count_settings = {
+            "mode": page_count_mode,
+            "min_pages": min_pages if page_count_mode == "custom_range" else None,
+            "max_pages": max_pages if page_count_mode == "custom_range" else None,
+            "fixed_pages": fixed_pages if page_count_mode == "fixed" else None,
+        }
+
+        confirmed_requirements: Dict[str, Any] = {
+            "topic": topic,
+            "requirements": requirements,
+            "target_audience": target_audience,
+            "audience_type": audience_type,
+            "custom_audience": custom_audience if audience_type == "自定义" else None,
+            "page_count_settings": page_count_settings,
+            "include_transition_pages": include_transition_pages,
+            "include_page_numbers": include_page_numbers,
+            "ppt_style": ppt_style,
+            "custom_style_prompt": custom_style_prompt if ppt_style == "custom" else None,
+            "description": description,
+            "content_source": content_source,
+            "source_urls": source_urls if content_source == "url" else None,
+            "file_processing_mode": file_processing_mode if content_source in ("file", "url") else None,
+            "content_analysis_depth": content_analysis_depth if content_source in ("file", "url") else None,
+            "file_generated_outline": None,
+            "force_file_outline_regeneration": content_source in ("file", "url"),
+        }
+        if saved_file_metadata:
+            confirmed_requirements.update(saved_file_metadata)
+
+        user_ppt_service = get_ppt_service_for_user(user.id)
+        success = await user_ppt_service.confirm_requirements_and_update_workflow(
+            project_id, confirmed_requirements
+        )
+        if not success:
+            raise RuntimeError("需求确认失败")
+
+        return JSONResponse({
+            "status": "success",
+            "project_id": project_id,
+            "redirect_url": f"/projects/{project_id}/todo",
+        })
+    except Exception as exc:
+        payload: Dict[str, Any] = {"status": "error", "message": str(exc)}
+        if project_id:
+            # 项目已建成但确认失败：引导用户到看板手动确认，避免工作丢失
+            payload["project_id"] = project_id
+            payload["redirect_url"] = f"/projects/{project_id}/todo"
+        return JSONResponse(payload, status_code=500)
 
 
 @router.post("/projects/{project_id}/start-workflow")
