@@ -580,396 +580,410 @@ async function updateOutlineForSlideOperation(operation, slideIndex, slideData =
     }
 }
 
-// 发送AI消息 - 使用流式输出
-function getAgentEventLabel(event) {
-    const type = event && event.type;
-    const labels = {
-        agent_start: '开始分析',
-        agent_step: '选择下一步',
-        tool_call: '调用工具',
-        tool_result: '工具结果',
-        validation_result: '校验结果',
-        draft_ready: '草稿就绪',
-        needs_confirmation: '等待确认',
-        final: '草稿就绪',
-        error: '出错'
-    };
-    return labels[type] || type || 'Agent 事件';
+// ---------------------------------------------------------------------------
+// 侧栏 AI 助手：agent run 的可视化与实时预览
+// ---------------------------------------------------------------------------
+
+/** 当前正在运行的 run；用于「停止」按钮和防重入。 */
+let activeAgentRun = null;
+
+const AGENT_TOOL_META = {
+    get_context: { label: '读取上下文', icon: 'fa-circle-info' },
+    read_slide: { label: '读取页面结构', icon: 'fa-sitemap' },
+    find_elements: { label: '查找元素', icon: 'fa-magnifying-glass' },
+    read_element: { label: '读取元素', icon: 'fa-code' },
+    set_text: { label: '修改文字', icon: 'fa-font' },
+    set_attributes: { label: '修改属性', icon: 'fa-tags' },
+    set_style: { label: '调整样式', icon: 'fa-paintbrush' },
+    insert_html: { label: '插入内容', icon: 'fa-plus' },
+    replace_element: { label: '替换元素', icon: 'fa-right-left' },
+    remove_element: { label: '删除元素', icon: 'fa-trash' },
+    replace_slide: { label: '整页重写', icon: 'fa-file-code' },
+    validate_draft: { label: '安全校验', icon: 'fa-shield-halved' },
+    diff_draft: { label: '查看改动', icon: 'fa-code-compare' },
+    undo_last_edit: { label: '撤销上一步', icon: 'fa-rotate-left' }
+};
+
+const AGENT_STATUS_TEXT = {
+    completed: '编辑完成',
+    max_iterations: '达到最大轮数，返回当前草稿',
+    cancelled: '已停止',
+    failed: '编辑失败'
+};
+
+function getAgentToolMeta(tool) {
+    return AGENT_TOOL_META[tool] || { label: tool || '工具', icon: 'fa-wrench' };
 }
 
 function compactAgentText(value, maxLength = 420) {
     const text = typeof value === 'string' ? value : String(value ?? '');
-    if (text.length <= maxLength) {
-        return text;
-    }
+    if (text.length <= maxLength) return text;
     return `${text.slice(0, maxLength)}...`;
 }
 
 function stringifyAgentPayload(payload) {
-    if (!payload || typeof payload !== 'object') {
-        return '';
-    }
+    if (payload === null || payload === undefined) return '';
+    if (typeof payload !== 'object') return compactAgentText(String(payload));
     try {
-        return JSON.stringify(payload, (key, value) => {
-            if (typeof value === 'string') {
-                return compactAgentText(value, 220);
-            }
-            return value;
-        }, 2);
+        return JSON.stringify(payload, (key, value) => (
+            typeof value === 'string' ? compactAgentText(value, 400) : value
+        ), 2);
     } catch (error) {
         return compactAgentText(String(payload));
     }
 }
 
-function getAgentEventDetail(event) {
-    if (!event) {
-        return '';
+/**
+ * 一次 run 在聊天气泡里的视图：状态条 + 步骤时间线 + 总结 + 结果操作。
+ */
+function createAgentRunView(messageDiv, options = {}) {
+    const anchor = messageDiv.querySelector('.ai-answer-regenerate-btn');
+
+    const root = document.createElement('div');
+    root.className = 'agent-run';
+
+    const status = document.createElement('div');
+    status.className = 'agent-run-status is-running';
+
+    const statusIcon = document.createElement('i');
+    statusIcon.className = 'fas fa-circle-notch fa-spin agent-run-status-icon';
+
+    const statusText = document.createElement('span');
+    statusText.className = 'agent-run-status-text';
+    statusText.textContent = '正在分析当前页面…';
+
+    const stopBtn = document.createElement('button');
+    stopBtn.type = 'button';
+    stopBtn.className = 'agent-run-stop';
+    stopBtn.innerHTML = '<i class="fas fa-stop"></i> 停止';
+    stopBtn.addEventListener('click', () => {
+        stopBtn.disabled = true;
+        stopBtn.innerHTML = '<i class="fas fa-hourglass-half"></i> 停止中…';
+        if (typeof options.onStop === 'function') options.onStop();
+    });
+
+    status.appendChild(statusIcon);
+    status.appendChild(statusText);
+    status.appendChild(stopBtn);
+
+    const steps = document.createElement('div');
+    steps.className = 'agent-run-steps';
+
+    const actions = document.createElement('div');
+    actions.className = 'agent-run-actions';
+
+    root.appendChild(status);
+    root.appendChild(steps);
+    root.appendChild(actions);
+    messageDiv.insertBefore(root, anchor || null);
+
+    const stepsByCallId = new Map();
+
+    function scrollToBottom() {
+        const container = document.getElementById('aiChatMessages');
+        if (container) container.scrollTop = container.scrollHeight;
     }
 
-    if (event.type === 'agent_start') {
-        const slideLabel = event.slideIndex ? `第${event.slideIndex}页` : '';
-        return [slideLabel, event.mode ? `模式：${event.mode}` : ''].filter(Boolean).join(' · ');
-    }
+    function addStepRow({ icon, label, summary, detail, state }) {
+        const row = document.createElement('div');
+        row.className = `agent-step is-${state || 'running'}`;
 
-    if (event.type === 'tool_call') {
-        const input = stringifyAgentPayload(event.toolInput || event.actionInput || {});
-        return [event.tool || event.action || '', input].filter(Boolean).join('\n');
-    }
+        const head = document.createElement('button');
+        head.type = 'button';
+        head.className = 'agent-step-head';
+        head.setAttribute('aria-expanded', 'false');
 
-    if (event.type === 'tool_result') {
-        const observation = event.observation || {};
-        return observation.summary || observation.error || (event.success ? '完成' : '失败');
-    }
+        const stateIcon = document.createElement('i');
+        stateIcon.className = `fas ${icon} agent-step-icon`;
 
-    if (event.type === 'validation_result') {
-        if (event.valid) {
-            return 'HTML 校验通过';
-        }
-        const errors = Array.isArray(event.errors) ? event.errors.join('；') : '';
-        return errors ? `HTML 校验失败：${errors}` : 'HTML 校验失败';
-    }
+        const labelEl = document.createElement('span');
+        labelEl.className = 'agent-step-label';
+        labelEl.textContent = label;
 
-    if (event.type === 'agent_step') {
-        return [event.thought, event.action].filter(Boolean).join('\n');
-    }
+        const summaryEl = document.createElement('span');
+        summaryEl.className = 'agent-step-summary';
+        summaryEl.textContent = summary || '';
 
-    if (event.type === 'draft_ready') {
-        return event.proposal?.summary || 'Agent 已生成可预览的编辑草稿';
-    }
+        const caret = document.createElement('i');
+        caret.className = 'fas fa-chevron-right agent-step-caret';
+        caret.setAttribute('aria-hidden', 'true');
 
-    if (event.type === 'needs_confirmation') {
-        return '';
-    }
+        head.appendChild(stateIcon);
+        head.appendChild(labelEl);
+        head.appendChild(summaryEl);
+        head.appendChild(caret);
+        row.appendChild(head);
 
-    if (event.type === 'error') {
-        return event.error || event.message || '未知错误';
-    }
+        const detailEl = document.createElement('pre');
+        detailEl.className = 'agent-step-detail';
+        detailEl.textContent = detail || '';
+        if (detail) row.appendChild(detailEl);
 
-    return event.message || event.summary || '';
-}
-
-function shouldCollapseAgentEvent(event) {
-    return event && (event.type === 'tool_call' || event.type === 'tool_result');
-}
-
-function getAgentEventSummary(event) {
-    if (!event) {
-        return '';
-    }
-    if (event.type === 'tool_call') {
-        return event.tool || event.action || 'tool';
-    }
-    if (event.type === 'tool_result') {
-        const observation = event.observation || {};
-        return compactAgentText(observation.summary || observation.error || (event.success ? 'done' : 'failed'), 120);
-    }
-    return compactAgentText(getAgentEventDetail(event), 120);
-}
-
-function getAgentEventExpandedDetail(event) {
-    if (!event) {
-        return '';
-    }
-    if (event.type === 'tool_result') {
-        const payload = stringifyAgentPayload(event.observation || {});
-        return payload || getAgentEventDetail(event);
-    }
-    return getAgentEventDetail(event);
-}
-
-function addAgentTimelineEvent(messageDiv, event) {
-    if (!messageDiv || !event) return;
-
-    let timeline = messageDiv.querySelector('.ai-agent-timeline');
-    if (!timeline) {
-        timeline = document.createElement('div');
-        timeline.className = 'ai-agent-timeline';
-        const regenerateBtn = messageDiv.querySelector('.ai-answer-regenerate-btn');
-        messageDiv.insertBefore(timeline, regenerateBtn || null);
-    }
-
-    const item = document.createElement('div');
-    item.className = `ai-agent-event ai-agent-event-${event.type || 'unknown'}`;
-
-    const isCollapsible = shouldCollapseAgentEvent(event);
-    const detailText = compactAgentText(getAgentEventExpandedDetail(event), isCollapsible ? 1400 : 700);
-
-    if (isCollapsible) {
-        item.classList.add('is-collapsed');
-
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'ai-agent-event-toggle';
-        toggle.setAttribute('aria-expanded', 'false');
-
-        const title = document.createElement('span');
-        title.className = 'ai-agent-event-title';
-        title.textContent = getAgentEventLabel(event);
-
-        const summary = document.createElement('span');
-        summary.className = 'ai-agent-event-summary';
-        summary.textContent = getAgentEventSummary(event);
-
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-chevron-right ai-agent-event-caret';
-        icon.setAttribute('aria-hidden', 'true');
-
-        toggle.appendChild(title);
-        if (summary.textContent) {
-            toggle.appendChild(summary);
-        }
-        toggle.appendChild(icon);
-        item.appendChild(toggle);
-
-        if (detailText) {
-            const detail = document.createElement('div');
-            detail.className = 'ai-agent-event-detail';
-            detail.textContent = detailText;
-            item.appendChild(detail);
-        }
-
-        toggle.addEventListener('click', () => {
-            const expanded = item.classList.toggle('is-expanded');
-            item.classList.toggle('is-collapsed', !expanded);
-            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        head.addEventListener('click', () => {
+            const expanded = row.classList.toggle('is-expanded');
+            head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
         });
-    } else {
-        const title = document.createElement('div');
-        title.className = 'ai-agent-event-title';
-        title.textContent = getAgentEventLabel(event);
 
-        item.appendChild(title);
-        if (detailText) {
-            const detail = document.createElement('div');
-            detail.className = 'ai-agent-event-detail';
-            detail.textContent = detailText;
-            item.appendChild(detail);
+        steps.appendChild(row);
+        scrollToBottom();
+
+        return {
+            row,
+            setState(nextState) {
+                row.className = `agent-step is-${nextState}`;
+            },
+            setIcon(nextIcon) {
+                stateIcon.className = `fas ${nextIcon} agent-step-icon`;
+            },
+            setSummary(text) {
+                summaryEl.textContent = text || '';
+            },
+            setDetail(text) {
+                detailEl.textContent = text || '';
+                if (text && !detailEl.isConnected) row.appendChild(detailEl);
+            }
+        };
+    }
+
+    return {
+        root,
+        setStatus(text, state) {
+            statusText.textContent = text;
+            if (state) {
+                status.className = `agent-run-status is-${state}`;
+                statusIcon.className = state === 'running'
+                    ? 'fas fa-circle-notch fa-spin agent-run-status-icon'
+                    : `fas ${state === 'failed' ? 'fa-triangle-exclamation' : 'fa-check'} agent-run-status-icon`;
+            }
+        },
+        hideStop() {
+            stopBtn.remove();
+        },
+        addThinking(text) {
+            if (!text || !text.trim()) return;
+            const row = document.createElement('div');
+            row.className = 'agent-thought';
+            row.textContent = compactAgentText(text.trim(), 600);
+            steps.appendChild(row);
+            scrollToBottom();
+        },
+        startTool(event) {
+            const meta = getAgentToolMeta(event.tool);
+            const step = addStepRow({
+                icon: 'fa-circle-notch fa-spin',
+                label: meta.label,
+                summary: '',
+                detail: stringifyAgentPayload(event.toolInput),
+                state: 'running'
+            });
+            stepsByCallId.set(event.callId || `${event.iteration}:${event.tool}`, { step, meta, event });
+        },
+        finishTool(event) {
+            const key = event.callId || `${event.iteration}:${event.tool}`;
+            const entry = stepsByCallId.get(key);
+            const meta = getAgentToolMeta(event.tool);
+            const detail = [
+                stringifyAgentPayload(entry ? entry.event.toolInput : event.toolInput),
+                '↓',
+                stringifyAgentPayload(event.observation)
+            ].filter(Boolean).join('\n');
+
+            if (!entry) {
+                addStepRow({
+                    icon: event.ok ? meta.icon : 'fa-triangle-exclamation',
+                    label: meta.label,
+                    summary: compactAgentText(event.summary, 140),
+                    detail,
+                    state: event.ok ? 'done' : 'failed'
+                });
+                return;
+            }
+            entry.step.setIcon(event.ok ? meta.icon : 'fa-triangle-exclamation');
+            entry.step.setSummary(compactAgentText(event.summary, 140));
+            entry.step.setDetail(detail);
+            entry.step.setState(event.ok ? 'done' : 'failed');
+        },
+        addNote(text, state = 'done') {
+            addStepRow({
+                icon: state === 'failed' ? 'fa-triangle-exclamation' : 'fa-circle-info',
+                label: text,
+                summary: '',
+                detail: '',
+                state
+            });
+        },
+        setActions(nodes) {
+            actions.innerHTML = '';
+            nodes.filter(Boolean).forEach(node => actions.appendChild(node));
+            scrollToBottom();
         }
-    }
-    timeline.appendChild(item);
-
-    const messagesContainer = document.getElementById('aiChatMessages');
-    if (messagesContainer) {
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    }
+    };
 }
 
-function addAgentProposalControls(messageDiv, proposal) {
-    if (!messageDiv || !proposal || !proposal.htmlContent) return;
-    if (messageDiv.querySelector('.ai-agent-proposal-controls')) return;
+function makeAgentActionButton(label, icon, variant, onClick) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `agent-action-btn agent-action-btn--${variant}`;
+    btn.innerHTML = `<i class="fas ${icon}"></i> ${label}`;
+    btn.addEventListener('click', () => onClick(btn));
+    return btn;
+}
 
-    const controls = document.createElement('div');
-    controls.className = 'ai-agent-proposal-controls';
-    controls.style.cssText = 'display:flex;gap:10px;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid #e5e7eb;flex-wrap:wrap;';
+/**
+ * run 结束后的结果区：保留并保存 / 撤销 / 看改动 / 全屏预览。
+ */
+function renderAgentRunResult(view, result, previewSession) {
+    const proposal = result && result.proposal;
 
-    const previewBtn = document.createElement('button');
-    previewBtn.type = 'button';
-    previewBtn.className = 'ai-preview-changes-btn';
-    previewBtn.innerHTML = '<i class="fas fa-eye"></i> 预览';
-    previewBtn.style.cssText = 'background:#007bff;color:white;border:none;padding:8px 14px;border-radius:4px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;gap:6px;';
-    previewBtn.addEventListener('click', () => showHTMLPreview(proposal.htmlContent));
-
-    const applyBtn = document.createElement('button');
-    applyBtn.type = 'button';
-    applyBtn.className = 'ai-apply-changes-btn';
-    applyBtn.innerHTML = '<i class="fas fa-check"></i> 应用';
-    applyBtn.style.cssText = 'background:#28a745;color:white;border:none;padding:8px 14px;border-radius:4px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;gap:6px;';
-    applyBtn.disabled = proposal.validation && proposal.validation.valid === false;
-    if (applyBtn.disabled) {
-        applyBtn.style.background = '#6c757d';
-        applyBtn.style.cursor = 'not-allowed';
-        applyBtn.title = 'HTML 校验未通过，不能应用';
+    if (!proposal || !proposal.changed) {
+        view.setActions([
+            proposal && proposal.diff
+                ? makeAgentActionButton('查看改动', 'fa-code-compare', 'ghost', () => showAgentDiff(proposal.diff))
+                : null
+        ]);
+        if (previewSession) {
+            previewSession.revert();
+            previewSession.release();
+        }
+        return;
     }
-    applyBtn.addEventListener('click', async () => {
-        applyBtn.disabled = true;
-        applyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 应用中...';
+
+    const invalid = proposal.validation && proposal.validation.valid === false;
+
+    const hint = document.createElement('span');
+    hint.className = 'agent-action-hint';
+    hint.textContent = invalid
+        ? `校验未通过：${(proposal.validation.errors || []).join('；')}`
+        : '预览中，尚未保存';
+    if (invalid) hint.classList.add('is-error');
+
+    const keepBtn = makeAgentActionButton('保留并保存', 'fa-check', 'primary', async (btn) => {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 保存中…';
         try {
             await applyAgentProposal(proposal);
-            applyBtn.innerHTML = '<i class="fas fa-check-circle"></i> 已应用';
-            applyBtn.style.background = '#6c757d';
-            discardBtn.disabled = true;
-            discardBtn.style.cursor = 'not-allowed';
+            if (previewSession) previewSession.release();
+            view.setActions([
+                makeAgentActionButton('已保存', 'fa-circle-check', 'muted', () => { }),
+                proposal.diff
+                    ? makeAgentActionButton('查看改动', 'fa-code-compare', 'ghost', () => showAgentDiff(proposal.diff))
+                    : null
+            ]);
         } catch (error) {
-            applyBtn.disabled = false;
-            applyBtn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> 重试应用';
-            showNotification(`Agent 应用失败：${error.message || error}`, 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-rotate-right"></i> 重试保存';
+            showNotification(`保存失败：${error.message || error}`, 'error');
         }
     });
+    keepBtn.disabled = !!invalid;
+    if (invalid) keepBtn.title = 'HTML 校验未通过，不能保存';
 
-    const discardBtn = document.createElement('button');
-    discardBtn.type = 'button';
-    discardBtn.className = 'ai-preview-changes-btn';
-    discardBtn.innerHTML = '<i class="fas fa-times"></i> 放弃';
-    discardBtn.style.cssText = 'background:#6c757d;color:white;border:none;padding:8px 14px;border-radius:4px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;gap:6px;';
-    discardBtn.addEventListener('click', () => {
-        controls.remove();
-        showNotification('已放弃 Agent 草稿', 'info');
+    const revertBtn = makeAgentActionButton('撤销', 'fa-rotate-left', 'ghost', () => {
+        if (previewSession) {
+            previewSession.revert();
+            previewSession.release();
+        }
+        view.setActions([
+            makeAgentActionButton('已撤销', 'fa-ban', 'muted', () => { })
+        ]);
+        showNotification('已撤销 Agent 的改动', 'info');
     });
 
-    controls.appendChild(previewBtn);
-    controls.appendChild(applyBtn);
-    controls.appendChild(discardBtn);
-
-    const regenerateBtn = messageDiv.querySelector('.ai-answer-regenerate-btn');
-    messageDiv.insertBefore(controls, regenerateBtn || null);
+    view.setActions([
+        keepBtn,
+        revertBtn,
+        proposal.diff
+            ? makeAgentActionButton('查看改动', 'fa-code-compare', 'ghost', () => showAgentDiff(proposal.diff))
+            : null,
+        makeAgentActionButton('全屏预览', 'fa-expand', 'ghost', () => showHTMLPreview(proposal.htmlContent)),
+        hint
+    ]);
 }
 
-async function handleAgentStreamingResponse(response, waitingDiv) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let aiMessageDiv = null;
-    let streamingMessageId = null;
-    let finalSummary = '';
+/** unified diff 查看器。 */
+function showAgentDiff(diffText) {
+    const modal = document.createElement('div');
+    modal.className = 'agent-diff-modal';
 
-    const ensureMessage = () => {
-        if (aiMessageDiv) {
-            return aiMessageDiv;
-        }
-        removeWaitingAnimation();
-        streamingMessageId = 'ai-agent-message-' + Date.now();
-        aiMessageDiv = addAIMessage('Agent 正在编辑当前幻灯片', 'assistant', streamingMessageId);
-        aiMessageDiv.dataset.complete = 'false';
-        return aiMessageDiv;
+    const panel = document.createElement('div');
+    panel.className = 'agent-diff-panel';
+
+    const header = document.createElement('div');
+    header.className = 'agent-diff-header';
+    header.innerHTML = '<span><i class="fas fa-code-compare"></i> Agent 改动</span>';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'agent-diff-close';
+    closeBtn.innerHTML = '<i class="fas fa-times"></i>';
+    header.appendChild(closeBtn);
+
+    const body = document.createElement('div');
+    body.className = 'agent-diff-body';
+    String(diffText || '').split('\n').forEach(line => {
+        const row = document.createElement('div');
+        row.className = 'agent-diff-line';
+        if (line.startsWith('+') && !line.startsWith('+++')) row.classList.add('is-add');
+        else if (line.startsWith('-') && !line.startsWith('---')) row.classList.add('is-del');
+        else if (line.startsWith('@@')) row.classList.add('is-hunk');
+        row.textContent = line || ' ';
+        body.appendChild(row);
+    });
+
+    const close = () => {
+        modal.remove();
+        document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => {
+        if (e.key === 'Escape') close();
     };
 
-    const processLine = (line) => {
-        if (!line.trim().startsWith('data: ')) return;
-        const dataStr = line.slice(6).trim();
-        if (!dataStr) return;
+    closeBtn.addEventListener('click', close);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) close();
+    });
+    document.addEventListener('keydown', onKey);
 
-        let event;
-        try {
-            event = JSON.parse(dataStr);
-        } catch (error) {
-            return;
-        }
-        if (!event || event.type === '_agent_done') return;
-
-        const messageDiv = ensureMessage();
-        addAgentTimelineEvent(messageDiv, event);
-
-        if ((event.type === 'draft_ready' || event.type === 'final') && event.proposal) {
-            finalSummary = event.proposal.summary || 'Agent 已生成可预览的编辑草稿';
-            setAIAssistantMessageText(messageDiv, finalSummary);
-            addAgentProposalControls(messageDiv, event.proposal);
-        } else if (event.type === 'error') {
-            finalSummary = `抱歉，Agent 编辑失败：${event.error || event.message || '未知错误'}`;
-            setAIAssistantMessageText(messageDiv, finalSummary);
-        }
-    };
-
-    try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-                processLine(line);
-            }
-        }
-
-        if (buffer.trim()) {
-            processLine(buffer);
-        }
-
-        if (!aiMessageDiv) {
-            removeWaitingAnimation();
-            finalSummary = 'Agent 没有返回可显示的结果';
-            aiMessageDiv = addAIMessage(finalSummary, 'assistant');
-        }
-    } catch (error) {
-        removeWaitingAnimation();
-        finalSummary = '抱歉，处理 Agent 流式响应时出现错误。';
-        if (aiMessageDiv) {
-            setAIAssistantMessageText(aiMessageDiv, finalSummary);
-        } else {
-            aiMessageDiv = addAIMessage(finalSummary, 'assistant');
-        }
-    } finally {
-        if (aiMessageDiv) {
-            aiMessageDiv.dataset.complete = 'true';
-            if (streamingMessageId && finalSummary) {
-                updateAIChatHistoryMessage(streamingMessageId, finalSummary);
-            }
-            refreshAIAssistantMessageLayout(aiMessageDiv);
-        }
-    }
+    panel.appendChild(header);
+    panel.appendChild(body);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
 }
 
-async function collectAgentProposalFromStream(response, onEvent = null) {
-    if (!response || !response.body || typeof response.body.getReader !== 'function') {
-        throw new Error('Agent未返回可读取的流式响应');
+/**
+ * 构造侧栏 agent 请求体。
+ */
+async function buildSidebarAgentPayload(message, chatHistoryForContext) {
+    const currentSlide = slidesData[currentSlideIndex];
+
+    let slideOutline = null;
+    if (projectOutline && projectOutline.slides && projectOutline.slides[currentSlideIndex]) {
+        slideOutline = projectOutline.slides[currentSlideIndex];
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let proposal = null;
+    let slideScreenshot = null;
+    if (visionModeEnabled) {
+        slideScreenshot = await captureSlideScreenshot();
+    }
 
-    const processLine = (line) => {
-        if (!line.trim().startsWith('data: ')) return;
-        const dataStr = line.slice(6).trim();
-        if (!dataStr) return;
-
-        const event = JSON.parse(dataStr);
-        if (!event || event.type === '_agent_done') return;
-
-        if (onEvent) onEvent(event);
-        if (event.type === 'error') {
-            throw new Error(event.error || event.message || 'Agent编辑失败');
-        }
-        if ((event.type === 'draft_ready' || event.type === 'final') && event.proposal && !proposal) {
-            proposal = event.proposal;
+    return {
+        projectId: window.landpptEditorConfig.projectId,
+        slideIndex: currentSlideIndex + 1,
+        mode: 'slide',
+        slideTitle: currentSlide.title,
+        slideContent: currentSlide.html_content,
+        userRequest: message,
+        slideOutline: slideOutline,
+        chatHistory: chatHistoryForContext,
+        images: getAllUploadedImages(),
+        visionEnabled: visionModeEnabled,
+        slideScreenshot: slideScreenshot,
+        projectInfo: {
+            title: window.landpptEditorProjectInfo.title,
+            topic: window.landpptEditorProjectInfo.topic,
+            scenario: window.landpptEditorProjectInfo.scenario
         }
     };
-
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-            processLine(line);
-        }
-    }
-
-    buffer += decoder.decode();
-    if (buffer.trim()) {
-        processLine(buffer);
-    }
-
-    if (!proposal) {
-        throw new Error('Agent未返回可应用的编辑草稿');
-    }
-    return proposal;
 }
 
 // options:
@@ -987,7 +1001,6 @@ async function sendAIMessage(options = {}) {
         return;
     }
 
-    // 自动将所有已上传的图片信息嵌入到消息中
     if (!options.skipAutoEmbed) {
         message = autoEmbedUploadedImages(message);
     }
@@ -997,7 +1010,6 @@ async function sendAIMessage(options = {}) {
         return;
     }
 
-    // 获取当前幻灯片的对话历史（不包含当前这次的 userRequest）
     let chatHistoryForContext = [];
     if (Array.isArray(options.chatHistoryOverride)) {
         chatHistoryForContext = options.chatHistoryOverride;
@@ -1008,82 +1020,125 @@ async function sendAIMessage(options = {}) {
         }));
     }
 
-    // 禁用发送按钮和输入框
     isAISending = true;
     sendBtn.disabled = true;
     sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 响应中...';
     inputBox.disabled = true;
 
     if (appendUserMessage) {
-        // 添加用户消息
         addAIMessage(message, 'user');
         inputBox.value = '';
     }
 
-    // 添加等待动画
     const waitingDiv = addWaitingAnimation();
+    const slideIndexForRun = currentSlideIndex;
+    let view = null;
+    let messageDiv = null;
+    let messageId = null;
+    let previewSession = null;
+
+    const ensureView = () => {
+        if (view) return view;
+        removeWaitingAnimation();
+        messageId = 'ai-agent-message-' + Date.now();
+        messageDiv = addAIMessage('', 'assistant', messageId);
+        messageDiv.dataset.complete = 'false';
+        view = createAgentRunView(messageDiv, {
+            onStop: () => {
+                if (activeAgentRun) activeAgentRun.cancel();
+            }
+        });
+        return view;
+    };
+
+    const setSummary = (text) => {
+        if (!messageDiv || !text) return;
+        setAIAssistantMessageText(messageDiv, text);
+        if (messageId) updateAIChatHistoryMessage(messageId, text);
+    };
 
     try {
-        // 构建AI请求上下文
-        const currentSlide = slidesData[currentSlideIndex];
+        const payload = await buildSidebarAgentPayload(message, chatHistoryForContext);
+        previewSession = window.landpptAgentClient.beginPreviewSession(slideIndexForRun);
 
-        // 获取当前幻灯片的大纲信息
-        let slideOutline = null;
-        if (projectOutline && projectOutline.slides && projectOutline.slides[currentSlideIndex]) {
-            slideOutline = projectOutline.slides[currentSlideIndex];
-        }
-
-        // 捕获幻灯片截图（如果启用了视觉模式）
-        let slideScreenshot = null;
-        if (visionModeEnabled) {
-            slideScreenshot = await captureSlideScreenshot();
-        }
-
-        // 获取所有已上传的图片信息
-        const referencedImages = getAllUploadedImages();
-
-        const context = {
-            projectId: window.landpptEditorConfig.projectId,
-            slideIndex: currentSlideIndex + 1,
-            mode: 'slide',
-            slideTitle: currentSlide.title,
-            slideContent: currentSlide.html_content,
-            userRequest: message,
-            slideOutline: slideOutline, // 添加当前幻灯片的大纲信息
-            chatHistory: chatHistoryForContext, // 添加对话历史（不含当前 userRequest）
-            images: referencedImages, // 添加图片信息
-            visionEnabled: visionModeEnabled, // 添加视觉模式状态
-            slideScreenshot: slideScreenshot, // 添加截图数据
-            projectInfo: {
-                title: window.landpptEditorProjectInfo.title,
-                topic: window.landpptEditorProjectInfo.topic,
-                scenario: window.landpptEditorProjectInfo.scenario
+        const run = window.landpptAgentClient.start({
+            payload,
+            handlers: {
+                onRunStarted: (event) => {
+                    ensureView().setStatus(
+                        event.protocol === 'text' ? '正在编辑（文本协议）…' : '正在编辑…',
+                        'running'
+                    );
+                },
+                onProtocolChanged: (event) => {
+                    ensureView().addNote(`已切换为文本协议：${compactAgentText(event.reason, 90)}`);
+                },
+                onThinking: (event) => {
+                    ensureView().addThinking(event.text);
+                },
+                onToolStarted: (event) => {
+                    const v = ensureView();
+                    v.setStatus(`${getAgentToolMeta(event.tool).label}…`, 'running');
+                    v.startTool(event);
+                },
+                onToolFinished: (event) => {
+                    ensureView().finishTool(event);
+                },
+                onDraft: (event) => {
+                    if (!event.html) return;
+                    previewSession.push(event.html);
+                    ensureView().setStatus(`已更新预览（第 ${event.revision} 次改动）`, 'running');
+                },
+                onValidation: (event) => {
+                    if (event.valid === false) {
+                        ensureView().addNote(
+                            `安全校验未通过：${(event.errors || []).join('；')}`,
+                            'failed'
+                        );
+                    }
+                },
+                onError: (event) => {
+                    ensureView().addNote(
+                        `${event.phase || '错误'}：${compactAgentText(event.message, 160)}`,
+                        'failed'
+                    );
+                }
             }
-        };
-
-
-
-        // 发送流式AI编辑请求
-        const response = await fetch('/api/ai/slide-edit-agent/stream', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(context)
         });
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
+        activeAgentRun = run;
+        const result = await run.done;
 
-        // 处理流式响应
-        await handleAgentStreamingResponse(response, waitingDiv);
-
+        const v = ensureView();
+        v.hideStop();
+        v.setStatus(
+            AGENT_STATUS_TEXT[result.status] || '完成',
+            result.status === 'failed' ? 'failed' : 'done'
+        );
+        setSummary(result.summary || AGENT_STATUS_TEXT[result.status] || '已完成');
+        renderAgentRunResult(v, result, previewSession);
     } catch (error) {
         removeWaitingAnimation();
-        addAIMessage('抱歉，无法连接到AI服务。请检查网络连接后重试。', 'assistant');
+        const text = error && error.aborted
+            ? '已中止本次编辑。'
+            : `抱歉，Agent 编辑失败：${(error && error.message) || error}`;
+        if (view) {
+            view.hideStop();
+            view.setStatus(error && error.aborted ? '已中止' : '编辑失败', 'failed');
+            setSummary(text);
+            if (previewSession) {
+                previewSession.revert();
+                previewSession.release();
+            }
+        } else {
+            addAIMessage(text, 'assistant');
+        }
     } finally {
-        // 恢复发送按钮和输入框
+        if (messageDiv) {
+            messageDiv.dataset.complete = 'true';
+            refreshAIAssistantMessageLayout(messageDiv);
+        }
+        activeAgentRun = null;
         isAISending = false;
         sendBtn.disabled = false;
         sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> 发送';

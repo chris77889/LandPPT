@@ -840,6 +840,40 @@ function parseQuickAiElementHtmlToIframeNode(elementHtml, iframeDoc, elementId) 
     }
 }
 
+function getQuickAiResultEl() {
+    return document.getElementById('quickAiEditResult');
+}
+
+function clearQuickAiResultBar() {
+    const el = getQuickAiResultEl();
+    if (!el) return;
+    el.innerHTML = '';
+    el.classList.remove('visible');
+}
+
+function setQuickAiResultBar(buttons) {
+    const el = getQuickAiResultEl();
+    if (!el) return;
+    el.innerHTML = '';
+    buttons.filter(Boolean).forEach(btn => el.appendChild(btn));
+    el.classList.toggle('visible', el.childElementCount > 0);
+}
+
+function makeQuickAiResultButton(label, icon, variant, onClick) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `quick-ai-edit-btn${variant ? ' ' + variant : ''}`;
+    btn.innerHTML = `<i class="fas ${icon}"></i> ${label}`;
+    btn.addEventListener('click', () => onClick(btn));
+    return btn;
+}
+
+/**
+ * 元素模式的 AI 编辑。
+ *
+ * 和侧栏走同一个 agent 客户端、同一套「实时预览 -> 保留/撤销」流程：
+ * 编辑过程中草稿直接推进 iframe，用户确认后才落库。
+ */
 async function quickAiEditApply() {
     if (!quickEditMode) {
         setQuickAiStatus('请先进入快速编辑模式');
@@ -873,8 +907,13 @@ async function quickAiEditApply() {
     const elementPath = getQuickAiElementDomPath(selectedQuickEditElement);
     quickAiTargetElementId = elementId;
 
+    clearQuickAiResultBar();
     setQuickAiStatus('AI 正在处理…');
     setQuickAiSendingState(true);
+
+    const slideIndexForRun = currentSlideIndex;
+    let previewSession = null;
+    let run = null;
 
     try {
         let slideOutline = null;
@@ -896,7 +935,6 @@ async function quickAiEditApply() {
             }
         }
 
-        // 截图阶段结束后，恢复为“处理中”状态提示（避免一直停留在“截图中”）
         setQuickAiStatus('AI 正在处理…');
 
         const slideContentForAgent = getCleanSlideHtmlForQuickAi() || currentSlide?.html_content || '';
@@ -926,26 +964,47 @@ async function quickAiEditApply() {
             }
         };
 
-        const response = await fetch('/api/ai/slide-edit-agent/stream', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
+        previewSession = window.landpptAgentClient.beginPreviewSession(slideIndexForRun);
 
-        if (!response.ok) {
-            const message = await response.text().catch(() => '');
-            throw new Error(message || `请求失败：HTTP ${response.status}`);
-        }
-
-        const proposal = await collectAgentProposalFromStream(response, (event) => {
-            if (event.type === 'tool_call') {
-                setQuickAiStatus(`Agent 调用工具：${event.tool || ''}`);
-            } else if (event.type === 'validation_result') {
-                setQuickAiStatus(event.valid ? '校验通过，准备应用…' : '校验失败');
+        run = window.landpptAgentClient.start({
+            payload,
+            handlers: {
+                onToolStarted: (event) => {
+                    const label = (typeof getAgentToolMeta === 'function')
+                        ? getAgentToolMeta(event.tool).label
+                        : event.tool;
+                    setQuickAiStatus(`${label}…`);
+                },
+                onDraft: (event) => {
+                    if (!event.html) return;
+                    previewSession.push(event.html);
+                    setQuickAiStatus(`已更新预览（第 ${event.revision} 次改动）`);
+                },
+                onValidation: (event) => {
+                    if (event.valid === false) {
+                        setQuickAiStatus(`校验失败：${(event.errors || []).join('；')}`);
+                    }
+                }
             }
         });
+
+        setQuickAiResultBar([
+            makeQuickAiResultButton('停止', 'fa-stop', '', (btn) => {
+                btn.disabled = true;
+                run.cancel();
+            })
+        ]);
+
+        const result = await run.done;
+        const proposal = result.proposal;
+
+        if (!proposal || !proposal.changed) {
+            clearQuickAiResultBar();
+            setQuickAiStatus(result.summary || '本次没有改动');
+            showToolbarStatus('Agent 未做改动', 'info');
+            previewSession.release();
+            return;
+        }
 
         if (proposal.validation && proposal.validation.valid === false) {
             throw new Error((proposal.validation.errors || []).join('；') || 'Agent草稿校验失败');
@@ -955,34 +1014,59 @@ async function quickAiEditApply() {
             ? { ...proposal, baseHash: expectedBaseHash }
             : { ...proposal };
 
-        // 保存一次撤销点：在真正应用前
-        saveStateForUndo();
-        const applied = await applyAgentProposal(applyProposal);
+        setQuickAiStatus(`${result.summary || '编辑完成'}（预览中，尚未保存）`);
+        setQuickAiResultBar([
+            makeQuickAiResultButton('保留并保存', 'fa-check', 'primary', async (btn) => {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 保存中…';
+                try {
+                    // 保存一次撤销点：在真正落库前
+                    saveStateForUndo();
+                    const applied = await applyAgentProposal(applyProposal);
+                    previewSession.release();
 
-        // 重新绑定快速编辑事件到新元素（允许对新增元素补绑定）
-        initQuickEditElementSelection();
-        syncQuickElementAgentResult(
-            currentSlideIndex,
-            applied.htmlContent || applyProposal.htmlContent,
-            elementId,
-            elementPath
-        );
-        showToolbarStatus('Agent 已应用到选中元素', 'success');
-        setQuickAiStatus('已应用，继续输入可再次编辑');
-
-        quickAiTargetElementId = null;
-
-        // 清空输入，便于下一次操作
-        if (inputEl) {
-            inputEl.value = '';
-            inputEl.focus();
-        }
-
-        // 应用后保持浮窗位置（若未被拖动也会记录一次定位）
-        saveQuickAiPopoverPosition();
-        saveQuickAiPopoverSize();
+                    // 重新绑定快速编辑事件到新元素（允许对新增元素补绑定）
+                    initQuickEditElementSelection();
+                    syncQuickElementAgentResult(
+                        slideIndexForRun,
+                        applied.htmlContent || applyProposal.htmlContent,
+                        elementId,
+                        elementPath
+                    );
+                    showToolbarStatus('Agent 已应用到选中元素', 'success');
+                    setQuickAiStatus('已保存，继续输入可再次编辑');
+                    clearQuickAiResultBar();
+                    quickAiTargetElementId = null;
+                    if (inputEl) {
+                        inputEl.value = '';
+                        inputEl.focus();
+                    }
+                    saveQuickAiPopoverPosition();
+                    saveQuickAiPopoverSize();
+                } catch (error) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-rotate-right"></i> 重试保存';
+                    setQuickAiStatus(`保存失败：${error.message || error}`);
+                }
+            }),
+            makeQuickAiResultButton('撤销', 'fa-rotate-left', '', () => {
+                previewSession.revert();
+                previewSession.release();
+                clearQuickAiResultBar();
+                setQuickAiStatus('已撤销 Agent 的改动');
+                showToolbarStatus('已撤销 Agent 改动', 'info');
+            }),
+            proposal.diff && typeof showAgentDiff === 'function'
+                ? makeQuickAiResultButton('看改动', 'fa-code-compare', '', () => showAgentDiff(proposal.diff))
+                : null
+        ]);
     } catch (error) {
-        setQuickAiStatus(`失败：${error.message || error}`);
+        if (previewSession) {
+            previewSession.revert();
+            previewSession.release();
+        }
+        clearQuickAiResultBar();
+        setQuickAiStatus(error && error.aborted ? '已中止' : `失败：${error.message || error}`);
         showToolbarStatus('AI 编辑失败', 'warning');
     } finally {
         setQuickAiSendingState(false);

@@ -9,182 +9,221 @@
 [![Docker](https://img.shields.io/badge/docker-supported-blue.svg?style=flat-square)](https://hub.docker.com/r/bradleylzh/landppt)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sligter/LandPPT)
 
----
-
-##  Open to Opportunities
-
-If you're interested in my projects or have suitable collaboration opportunities, feel free to reach out!
-
-[![Email](https://img.shields.io/badge/_Email-ai%40yydsapp.com-blue?style=for-the-badge)](mailto:ai@yydsapp.com)
-
----
-
-
 **English** | [中文](README.md)
 
+<div align="center">
+  <img src="https://img.pub/p/e810c5680509b4f051a5.png" width="160" alt="LandPPT Logo" />
+  <p><b>Topic / Document → Outline → HTML PPT → Script / Narration / Export</b></p>
+</div>
+
+**In one line:** LandPPT is an LLM-powered presentation platform—turn a topic or uploaded document into an editable professional deck, with speech scripts, narrated video, and multi-format export.
+
+**Core capabilities:**
+
+| Capability | Description |
+|------------|-------------|
+| One-click generation | Topic to full PPT, with parallel slide generation |
+| Smart images | Local gallery / web stock / AI generation |
+| Deep research | Tavily + SearXNG for live web retrieval and summaries |
+| Scripts & video | Speech scripts + Edge-TTS per-slide narration; 1080p video export |
+| Multi-format export | PDF / HTML / PPTX / images / DOCX / Markdown |
+| Automation | OpenAI-compatible API + REST APIs with API-key auth |
+
+[Documentation](http://landppt-doc.52yyds.top/docs) · [Docker Hub](https://hub.docker.com/r/bradleylzh/landppt) · [Issues](https://github.com/sligter/LandPPT/issues)
+
 ---
 
-##  Table of Contents
+## Table of Contents
 
-- [Project Overview](#-project-overview)
+- [Overview](#overview)
 - [Features](#features)
-- [Quick Start](#-quick-start)
-- [Usage Guide](#-usage-guide)
-- [Configuration](#-configuration)
-- [FAQ](#-faq)
-- [License](#-license)
+- [Screenshots](#screenshots)
+- [Dependencies & Scope](#dependencies--scope)
+- [Quick Start](#quick-start)
+- [Usage Guide](#usage-guide)
+- [Configuration](#configuration)
+- [FAQ](#faq)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
 
-##  Project Overview
+---
 
-LandPPT is an intelligent presentation generation platform powered by Large Language Models (LLMs) that automatically converts document content into professional PPT presentations. The platform integrates multiple AI models, intelligent image processing, deep research capabilities, and rich template systems, enabling users to effortlessly create high-quality presentations.
+## Overview
 
+LandPPT folds outline writing, layout, imagery, speaker notes, and export into one AI workflow:
 
-### Main Interface
-![image](https://img.pub/p/7d5c3c1a4b625abeb4c1.png)
+1. **Input** — topic text, or PDF / Word / Markdown / Excel / PPT documents  
+2. **Plan** — editable outline; optional deep research for up-to-date context  
+3. **Generate** — parallel HTML slides with templates and AI-adaptive layouts  
+4. **Refine** — sidebar AI chat editing, image swap, visual references  
+5. **Deliver** — multi-format export, or a public share link (with narration and subtitles)
 
-### Outline Generation
-![image](https://img.pub/p/a31e4f94c5d2bd577d8d.png)
+**Local default:** SQLite + in-memory cache—one command to try, no PostgreSQL / Valkey required.  
+**Production recommended:** `docker compose` with Web + Worker + PostgreSQL + Valkey + MinIO.
 
-### Generation Effect
-![image](https://img.pub/p/e6cffa89a2b532a8514b.png)
-
-![image](https://img.pub/p/9a38b57c6f5f470ad59b.png)
-
-### Online editing
-![image](https://img.pub/p/6d357a847626f1a55c13.png)
-
-![image](https://img.pub/p/42f84b07850f5aa4aebb.png)
-
-![image](https://img.pub/p/8dccee74d0b85893bd38.png)
-
-![image](https://img.pub/p/aaf483b2507a57db8b35.png)
-
-### Speech Script Generation
-![image](https://img.pub/p/c53b752e0a6833c0ee87.png)
-
-### Template Generation
-![image](https://img.pub/p/892622b3f3cc0d6ad843.png)
+---
 
 ## Features
 
-**Highlights:**
+### Multi-AI providers
 
-- **One-Click Generation**: Topic to full PPT, fully automated with parallel generation
-- **Smart Image Matching**: Gallery / web / AI generation fused; auto-matched
-- **Deep Research**: Tavily + SearXNG dual engine, real-time web info extraction
-- **Speech Scripts & Narration Video**: Speech scripts, Edge-TTS per-slide narration, exportable 1080p videos
-- **Multi-format Export**: PDF / HTML / PPTX / image / DOCX / Markdown
-- **Automation Ready**: OpenAI-compatible API + REST APIs with API-key auth
+- OpenAI GPT, Anthropic Claude, Google Gemini, Azure OpenAI  
+- OpenAI-compatible endpoints (DeepSeek, Moonshot, Qwen, …)  
+- Ollama local models; per-role routing (outline / slides / editor / template / speech) for cost control  
 
-**In Detail:**
+### Files & deep research
 
-### Multi-AI Provider Support
-- OpenAI GPT, Anthropic Claude, Google Gemini, Azure OpenAI
-- Compatible with DeepSeek, Moonshot, Qwen and other OpenAI-protocol endpoints
-- Ollama local models; per-role model selection for precise cost control
+- Formats: PDF / Word / Markdown / TXT / Excel / PowerPoint  
+- High-quality parsing via MinerU + MarkItDown  
+- Multi-engine retrieval with Tavily + SearXNG and web summarization  
 
-### File Processing & Deep Research
-- Multi-format: PDF / Word / Markdown / TXT / Excel / PowerPoint
-- High-quality parsing via MinerU + MarkItDown; retrieval via Tavily + SearXNG
-- Deep web content extraction & summarization, multilingual real-time info
+### Smart images
 
-### Image Processing
-- Three sources: local gallery / web search (Pixabay, Unsplash) / AI generation (DALL-E, SiliconFlow, Pollinations, OpenAI, Gemini)
-- AI auto-matches the best images; auto resize, format conversion, quality optimization
+- Three sources: local gallery / Pixabay & Unsplash / DALL·E, SiliconFlow, Pollinations, OpenAI, Gemini  
+- AI matching; automatic resize, format conversion, quality tuning  
+- Image service is **off by default** (`ENABLE_IMAGE_SERVICE`)  
 
-### Template System
-- Global master template + diverse AI layouts; scenario templates (general / tourism / education)
-- Extract layout from uploaded reference PPTX; project-level AI-adaptive templates; custom templates
+### Templates & projects
 
-### Project Management
-- Four-stage workflow: Requirements → Outline → TODO tracking → PPT generation
-- Stage restart & resume; visual outline editor with live preview; batch operations
-- One-click public sharing with fullscreen playback, narration audio and subtitles
+- Global master template + scenario templates (general / tourism / education, …)  
+- Extract layout from uploaded reference PPTX; project-level AI-adaptive templates  
+- Four-stage workflow: requirements → outline → task tracking → PPT generation  
+- Stage restart/resume, visual outline editor, one-click public sharing  
 
-### Web Interface
-- Responsive UI, sidebar AI chat editing with image upload and visual analysis
-- Speech-script generation (DOCX / Markdown / PPT notes), fullscreen playback, 16:9 live preview
+### Platform & ops
 
-### Platform & Operations
-- Docker / Compose single-container and multi-service; PostgreSQL + Valkey + MinIO production stack
-- Async background tasks (PDF / PPTX / narration video) with multi-worker fault tolerance
-- Account system: local auth, GitHub / Linux Do OAuth, email verification, registration rate limiting
-- Optional credits, SMTP / Resend, Cloudflare Turnstile; local-deployment friendly
+- Single-container Docker or multi-service Compose; async jobs (PDF / PPTX / narration video)  
+- Local accounts, GitHub / Linux Do OAuth, email verification, registration rate limits  
+- Optional credits, SMTP / Resend, Cloudflare Turnstile  
 
-##  Quick Start
+---
 
-### System Requirements
-- Python 3.11+
-- SQLite 3
-- ffmpeg (required for narration video export)
-- Docker (optional)
+## Screenshots
 
-### Database Migrations (Automatic)
-- By default, the app will auto-detect and apply pending database migrations on startup (not user-specific). Disable via `LANDPPT_AUTO_MIGRATE_ON_STARTUP=false`.
-- Standalone/local startup now defaults to SQLite; only set `DATABASE_URL` when you want to use PostgreSQL or another external database explicitly.
-- If you run multiple containers/nodes against the same database, consider disabling auto-migrate and running migrations as a dedicated one-off job.
+### Main interface
 
-### Local Installation
+![Main interface](https://img.pub/p/3accad83a8b624d7cb19.png)
 
-#### Method 1: uv Setup (Recommended)
+### Outline & generation result
+
+![Outline](https://img.pub/p/a31e4f94c5d2bd577d8d.png)
+
+![Generation result](https://img.pub/p/e6cffa89a2b532a8514b.png)
+
+<details>
+<summary><b>More screenshots (editor / speech / export / templates)</b></summary>
+
+#### Main interface (alt)
+
+![Main interface 2](https://img.pub/p/7d5c3c1a4b625abeb4c1.png)
+
+#### Generation result (alt)
+
+![Generation result 2](https://img.pub/p/9a38b57c6f5f470ad59b.png)
+
+#### Online editing
+
+![Editor 1](https://img.pub/p/6d357a847626f1a55c13.png)
+
+![Editor 2](https://img.pub/p/42f84b07850f5aa4aebb.png)
+
+![Editor 3](https://img.pub/p/8dccee74d0b85893bd38.png)
+
+![Editor 4](https://img.pub/p/aaf483b2507a57db8b35.png)
+
+#### Speech script
+
+![Speech script](https://img.pub/p/c53b752e0a6833c0ee87.png)
+
+#### Template generation
+
+![Template](https://img.pub/p/892622b3f3cc0d6ad843.png)
+
+</details>
+
+---
+
+## Dependencies & Scope
+
+Separate **minimum runnable** from **full feature set** so you are not surprised after first boot.
+
+| Capability | Dependency | Notes |
+|------------|------------|--------|
+| Core generation (outline / HTML PPT) | At least one AI provider key | **Required** |
+| Local models | Ollama, etc. | Optional offline inference |
+| Deep research | `TAVILY_API_KEY` or SearXNG | Optional |
+| Web / AI images | Gallery or image-gen keys + `ENABLE_IMAGE_SERVICE=true` | Optional (off by default) |
+| **Standard editable PPTX** | **`APRYSE_LICENSE_KEY` (commercial)** | **Optional, but required for editable PPTX** |
+| Image-based PPTX | No Apryse | Higher visual fidelity; in-slide elements usually not editable |
+| Narration video | `ffmpeg`; optional ComfyUI TTS | Optional |
+| Multi-user / background jobs | PostgreSQL + Valkey + MinIO + Worker | Prefer Compose |
+
+> **Production security**  
+> - Change `SECRET_KEY` and admin password; do not ship default `admin` / `admin123`  
+> - Production compose disables admin bootstrap by default—enable explicitly on first deploy only  
+> - Use strong random `LANDPPT_API_KEY` / `LANDPPT_API_KEYS`  
+> - Never commit real secrets to Git  
+
+---
+
+## Quick Start
+
+### System requirements
+
+- Python 3.11+  
+- SQLite 3 (local default)  
+- ffmpeg (for narration video export)  
+- Docker (optional)  
+
+### Database migrations
+
+- Pending migrations run automatically on startup; disable with `LANDPPT_AUTO_MIGRATE_ON_STARTUP=false`  
+- Local default is SQLite; set `DATABASE_URL` only when you want PostgreSQL or another external DB  
+- For multi-node shared databases, disable auto-migrate and run a one-off migration job  
+
+### Option 1: uv (recommended for local)
 
 ```bash
-# Clone the repository
 git clone https://github.com/sligter/LandPPT.git
 cd LandPPT
 
-# Install uv (if not already installed)
+# Install uv if needed
 # Windows (PowerShell)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-# macOS/Linux
+# macOS / Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install dependencies
 uv sync --extra dev
-
-# Configure environment variables
 cp .env.example .env
-# Edit .env file and configure your AI API keys
+# Edit .env — configure at least one AI API key
 
-# Start the service (defaults to port 8000 with SQLite + memory cache; PostgreSQL / Valkey are optional)
+# Defaults to :8000 with SQLite + memory cache
 uv run python run.py
 ```
 
-#### Method 2: Traditional pip Installation
+### Option 2: pip
 
 ```bash
-# Clone the repository
 git clone https://github.com/sligter/LandPPT.git
 cd LandPPT
 
-# Create virtual environment
 python -m venv venv
-# Activate virtual environment
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
+# Windows: venv\Scripts\activate
+# macOS / Linux: source venv/bin/activate
 
-# Install dependencies
 pip install -e .
-
-# Configure environment variables
 cp .env.example .env
-# Edit .env file and configure your AI API keys
+# Edit .env with AI API keys
 
-# Start the service (defaults to port 8000 with SQLite + memory cache; PostgreSQL / Valkey are optional)
 python run.py
 ```
 
-### Docker Deployment
-
-#### Using Pre-built Image (Recommended)
+### Option 3: Docker single container
 
 ```bash
-# Pull the latest image
 docker pull bradleylzh/landppt:latest
 
-# Run container
 docker run -d \
   --name landppt \
   -p 8000:8000 \
@@ -196,35 +235,29 @@ docker run -d \
   -v landppt_lib:/app/lib \
   bradleylzh/landppt:latest
 
-# View logs
 docker logs -f landppt
 ```
 
-> **Note**: Make sure to create and configure the `.env` file with necessary API keys before running.
+> Create and configure `.env` (at least one AI API key) before running.
 
-#### Docker Compose (Recommended for Production)
+### Option 4: Docker Compose (recommended for production)
 
-The repository includes `docker-compose.yml`, which uses the pre-built image and starts `landppt` (web service), `worker` (background task queue), PostgreSQL, Valkey, and MinIO (S3 object storage; `minio-init` creates the bucket automatically). This is the recommended setup for multi-user deployments, background jobs, and long-running environments. For standalone local use, you can run `python run.py` / `uv run python run.py` directly and use the default SQLite + memory-cache setup without extra services.
+Bundled `docker-compose.yml` starts **landppt (Web) + worker + PostgreSQL + Valkey + MinIO** (`minio-init` creates the bucket). Prefer plain `python run.py` for a lightweight local trial.
 
 ```bash
-# Prepare configuration (compose mounts .env into the container, so create it first)
 cp .env.example .env
-# At minimum, set AI keys, SECRET_KEY, and POSTGRES_PASSWORD
+# At minimum: AI keys, SECRET_KEY, POSTGRES_PASSWORD
 
-# Start the production stack (uses bradleylzh/landppt:latest; override with LANDPPT_IMAGE)
 docker compose up -d
-
-# View logs
 docker compose logs -f landppt
 ```
 
-Default URL: `http://localhost:8000` (change with `LANDPPT_PORT`); MinIO console: `http://localhost:9001`.
+- App: `http://localhost:8000` (override with `LANDPPT_PORT`)  
+- MinIO console: `http://localhost:9001`  
+- Production disables admin auto-bootstrap by default; set `LANDPPT_BOOTSTRAP_ADMIN_ENABLED=true` and admin credentials for first deploy  
+- Default image `bradleylzh/landppt:latest`; override with `LANDPPT_IMAGE`  
 
-The production stack disables admin auto-bootstrap by default. For a first-time deployment, set `LANDPPT_BOOTSTRAP_ADMIN_ENABLED=true` along with the admin username/password variables.
-
-#### Development Mode (Hot Reload)
-
-Use `docker-compose-dev.yaml` for local development. It builds the image from the local Dockerfile, mounts the source directory, and enables hot reload. An admin account (`admin` / `admin123`) is bootstrapped by default.
+### Option 5: Development (hot reload)
 
 ```bash
 cp .env.example .env
@@ -232,209 +265,229 @@ docker compose -f docker-compose-dev.yaml up -d --build
 docker compose -f docker-compose-dev.yaml logs -f landppt
 ```
 
-Default URL: `http://localhost:8000`
+Builds from the local Dockerfile, mounts sources, enables hot reload; bootstraps `admin` / `admin123` by default.
 
-##  Usage Guide
+---
 
-### 1. Access Web Interface
-After starting the service, visit:
-- **Web Interface**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
+## Usage Guide
 
-An administrator account is bootstrapped by default (`admin` / `admin123`), controlled by the `LANDPPT_BOOTSTRAP_ADMIN_*` environment variables. For production, always change the default credentials via these variables or disable auto-bootstrap.
+### 1. Access the service
 
-### 2. Configure AI Providers
-Configure your AI API keys in the settings page:
-- OpenAI API Key
-- Anthropic API Key
-- Google API Key
-- Or configure local Ollama service
+| Entry | URL |
+|-------|-----|
+| Web UI | http://localhost:8000 |
+| API docs | http://localhost:8000/docs |
+| Health | http://localhost:8000/health |
 
-### 3. Create PPT Projects
-1. **Requirements Confirmation**: Input topic, select audience, set page range, choose scenario template
-2. **Outline Generation**: AI intelligently generates structured outline with visual editing support
-3. **Content Research**: Optionally enable deep research functionality to get latest relevant information
-4. **Image Configuration**: Configure image acquisition methods (local/network/AI generation)
-5. **PPT Generation**: Generate complete HTML presentation based on outline
+Local/dev often bootstraps `admin` / `admin123` via `LANDPPT_BOOTSTRAP_ADMIN_*`. **Always change or disable this in production.**
 
-### 4. Edit and Export
-- Use AI chat functionality for real-time content and style editing with image upload for visual references
-- Support image replacement and optimization, AI template generation can reference uploaded images
-- Generate accompanying speech scripts with single/multiple/all slide modes
-- Generate per-slide narration audio via Edge-TTS or ComfyUI Qwen3-TD, including reference-audio upload support
-- Export narrated MP4 videos with 1080p, 30/60fps, and optional embedded subtitles
-- Export as PDF, HTML, standard PPTX, image-based PPTX, and speech script DOCX/Markdown formats
-- Generate public share links and play narration audio/subtitles directly in the shared presentation page
-- Save project versions and history
-- Support batch processing and template reuse
+### 2. Configure AI providers
 
-### 5. Automation & Open Interfaces
-- Use API keys to connect project workflows to n8n, CI jobs, scripts, or your own backend services
-- OpenAI-compatible endpoints are available at `/v1/chat/completions`, `/v1/completions`, and `/v1/models`
-- Project-level export/share/speech endpoints are available for non-browser automation flows
+In the settings UI or `.env`:
 
-##  Configuration
+- OpenAI API key (also works with DeepSeek, Moonshot, Qwen, and other OpenAI-compatible APIs)  
+- Anthropic / Google API keys  
+- Or local Ollama  
 
-### Environment Variables
+### 3. Create a PPT project
 
-Main configuration items (common options are in `.env.example`; advanced options can be referenced in `src/landppt/core/config.py`):
+1. **Requirements** — topic, audience, page range, scenario template  
+2. **Outline** — structured outline with visual editing  
+3. **Research** (optional) — deep research for fresh context  
+4. **Images** (optional) — local / web / AI generation  
+5. **Generate** — HTML presentation from the outline  
+
+### 4. Edit & export
+
+- Sidebar AI chat for content and style; upload images as visual references  
+- Speech scripts (DOCX / Markdown / PPT notes)  
+- Per-slide narration: Edge-TTS or ComfyUI Qwen3-TD (reference audio supported)  
+- Narrated MP4 (1080p, 30/60fps, optional subtitles)  
+- Export PDF, HTML, **standard PPTX**, **image-based PPTX**, scripts, etc.  
+- One-click public share (share page plays narration and subtitles)  
+
+### 5. Automation APIs
+
+- API-key auth for CI, scripts, n8n, custom backends  
+- OpenAI-compatible: `/v1/chat/completions`, `/v1/completions`, `/v1/models`  
+- Project-level export / share / speech endpoints for non-browser flows  
+
+---
+
+## Configuration
+
+Full list: [`.env.example`](.env.example). Advanced options: `src/landppt/core/config.py`. Below is **minimum runnable** + **production must-change** only.
+
+### Minimum (local)
 
 ```bash
-# AI Provider Configuration
+# At least one AI provider
 DEFAULT_AI_PROVIDER=openai
 OPENAI_API_KEY=your_openai_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-GOOGLE_API_KEY=your_google_api_key_here
-GOOGLE_BASE_URL=https://generativelanguage.googleapis.com  # Custom Gemini endpoint
+# or ANTHROPIC_API_KEY / GOOGLE_API_KEY / local Ollama
 
-# Role-based model routing (optional)
-OUTLINE_MODEL_PROVIDER=openai
-OUTLINE_MODEL_NAME=gpt-4o-mini
-SLIDE_GENERATION_MODEL_PROVIDER=openai
-SLIDE_GENERATION_MODEL_NAME=gpt-4o
-EDITOR_ASSISTANT_MODEL_PROVIDER=openai
-TEMPLATE_GENERATION_MODEL_PROVIDER=openai
-SPEECH_SCRIPT_MODEL_PROVIDER=openai
-SPEECH_SCRIPT_MODEL_NAME=gpt-4o-mini
-
-# Server Configuration
 HOST=0.0.0.0
 PORT=8000
-SECRET_KEY=your-secure-secret-key
-WORKERS=2
-RELOAD=false
 
-# Research Functionality Configuration
-TAVILY_API_KEY=your_tavily_api_key_here        # Tavily search engine
-TAVILY_BASE_URL=https://gateway.example.com/tavily # Optional custom Tavily gateway/proxy URL
-SEARXNG_HOST=http://localhost:8888             # SearXNG instance URL
-RESEARCH_PROVIDER=tavily                       # Research provider: tavily, searxng, both
-
-# Image Service Configuration
-ENABLE_IMAGE_SERVICE=false                      # Enable image service (off by default, enable on demand)
-IMAGE_USER_STORAGE_QUOTA_MB=100                # Per-user image hosting quota (MB), set <= 0 to disable
-PIXABAY_API_KEY=your_pixabay_api_key_here     # Pixabay gallery
-UNSPLASH_ACCESS_KEY=your_unsplash_key_here    # Unsplash gallery
-SILICONFLOW_API_KEY=your_siliconflow_key_here # AI image generation
-POLLINATIONS_API_KEY=your_pollinations_api_key_here # Pollinations AI (gen.pollinations.ai)
-
-# Automation auth
-LANDPPT_API_KEY=replace-with-strong-random-key
-LANDPPT_API_KEYS=admin:prod-key,robot:n8n-key
-LANDPPT_BOOTSTRAP_ADMIN_ENABLED=true            # Bootstraps the admin account by default; change the default password or disable it in production
-LANDPPT_ENABLE_API_DOCS=true
-LANDPPT_ALLOW_HEADER_SESSION_AUTH=false
-
-# Storage / cache
-DATABASE_URL=sqlite:///./landppt.db
-CACHE_BACKEND=memory
-VALKEY_URL=valkey://localhost:6379
-# Production example:
-# DATABASE_URL=postgresql://landppt:password@localhost:5432/landppt
-# CACHE_BACKEND=valkey
-
-# Export Functionality Configuration
-APRYSE_LICENSE_KEY=your_apryse_key_here       # PPTX export
-COMFYUI_BASE_URL=http://127.0.0.1:8188        # ComfyUI TTS
-COMFYUI_TTS_WORKFLOW_PATH=tests/Qwen3-TD-TTS.json
-
-# Registration / OAuth / email / monetization (optional)
-EMAIL_PROVIDER=smtp
-ENABLE_USER_REGISTRATION=true
-INVITE_CODE_REQUIRED_FOR_REGISTRATION=false
-GITHUB_OAUTH_ENABLED=false
-LINUXDO_OAUTH_ENABLED=false
-ENABLE_CREDITS_SYSTEM=false
-TURNSTILE_ENABLED=false
-
-# Generation Parameters
-MAX_TOKENS=8192
-TEMPERATURE=0.7
+# Local defaults (optional to set)
+# DATABASE_URL=sqlite:///./landppt.db
+# CACHE_BACKEND=memory
 ```
 
-Additional notes:
+### Production must-change
 
-- Standard PPTX export depends on `APRYSE_LICENSE_KEY`; the image-based PPTX endpoint `/api/projects/{project_id}/export/pptx-images` does not depend on Apryse and is better for preserving complex HTML/CSS styling.
-- Default local startup uses SQLite + memory cache on `http://localhost:8000`; production deployments should still prefer `PostgreSQL + Valkey`.
-- Narration video export requires `ffmpeg`; ComfyUI voice cloning additionally requires `COMFYUI_BASE_URL` and a reference audio upload.
+```bash
+SECRET_KEY=replace-with-long-random-string
+POSTGRES_PASSWORD=replace-with-strong-password   # Compose production stack
 
-##  Contributing
+LANDPPT_BOOTSTRAP_ADMIN_ENABLED=false            # or true + custom credentials
+# LANDPPT_BOOTSTRAP_ADMIN_USERNAME=...
+# LANDPPT_BOOTSTRAP_ADMIN_PASSWORD=...
 
-We welcome all forms of contributions!
+LANDPPT_API_KEY=replace-with-strong-random-key
+# or multi-key: LANDPPT_API_KEYS=admin:prod-key,robot:n8n-key
 
-### How to Contribute
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+# Production storage example
+# DATABASE_URL=postgresql://landppt:password@localhost:5432/landppt
+# CACHE_BACKEND=valkey
+# VALKEY_URL=valkey://localhost:6379
+```
 
-For details, please see [Contributing Guide](CONTRIBUTING.md).
+### Enable as needed
 
-### Reporting Issues
-If you find bugs or have feature suggestions, please create a new issue on the [Issues](https://github.com/sligter/LandPPT/issues) page.
+```bash
+# Per-role model routing (cost control)
+OUTLINE_MODEL_NAME=gpt-4o-mini
+SLIDE_GENERATION_MODEL_NAME=gpt-4o
+SPEECH_SCRIPT_MODEL_NAME=gpt-4o-mini
 
-##  FAQ
+# Deep research
+TAVILY_API_KEY=...
+# SEARXNG_HOST=http://localhost:8888
+# RESEARCH_PROVIDER=tavily   # tavily | searxng | both
+
+# Image service (off by default)
+ENABLE_IMAGE_SERVICE=true
+PIXABAY_API_KEY=...
+UNSPLASH_ACCESS_KEY=...
+SILICONFLOW_API_KEY=...
+
+# Standard editable PPTX (commercial license)
+APRYSE_LICENSE_KEY=...
+
+# Optional ComfyUI TTS
+# COMFYUI_BASE_URL=http://127.0.0.1:8188
+# COMFYUI_TTS_WORKFLOW_PATH=tests/Qwen3-TD-TTS.json
+
+# Registration / OAuth / email / credits / Turnstile
+# ENABLE_USER_REGISTRATION=true
+# GITHUB_OAUTH_ENABLED=false
+# ENABLE_CREDITS_SYSTEM=false
+```
+
+**Notes:**
+
+- **Standard PPTX** needs `APRYSE_LICENSE_KEY`. **Image-based PPTX** (`/api/projects/{project_id}/export/pptx-images`) does not; better for complex CSS/icons.  
+- If images still point at `localhost` behind a reverse proxy, set **BASE_URL** in Web “Application Configuration”. See [docs/base_url_configuration.md](docs/base_url_configuration.md).  
+- Narration video requires `ffmpeg` on the host/container.  
+
+---
+
+## FAQ
 
 ### Q: Which AI models are supported?
-A: Supports OpenAI GPT, Anthropic Claude, Google Gemini, Azure OpenAI, and Ollama local models. You can switch between different AI providers in the configuration page.
 
-### Q: How to configure image functionality?
-A: Configure the corresponding API keys in the `.env` file:
-- Pixabay: `PIXABAY_API_KEY`
-- Unsplash: `UNSPLASH_ACCESS_KEY`
-- AI Generation: `SILICONFLOW_API_KEY` or `POLLINATIONS_API_KEY`
+OpenAI GPT (and compatible APIs), Anthropic Claude, Google Gemini, Azure OpenAI, Ollama local models, and more. Switch providers in the config UI.
 
-### Q: Image links break behind a reverse proxy (Nginx, Apache)?
-Without a correct `base_url`, you may see: image links still pointing to `localhost:8000`, images failing to load on the frontend, or broken image preview/download.
+### Q: How do I enable images?
 
-**Solution (via the Web UI)**:
-1. Visit the system configuration page: `https://your-domain.com/ai-config`
-2. Switch to the "Application Configuration" tab
-3. Enter your proxy domain in the "Base URL (BASE_URL)" field, e.g. `https://your-domain.com` or `http://your-domain.com:8080`
-4. Click "Save Application Configuration"
+Set `ENABLE_IMAGE_SERVICE=true` and configure:
 
-### Q: How to use the research functionality?
-A: Configure `TAVILY_API_KEY` or deploy a SearXNG instance, then enable research functionality when creating PPTs to automatically get relevant information.
+- Pixabay: `PIXABAY_API_KEY`  
+- Unsplash: `UNSPLASH_ACCESS_KEY`  
+- AI generation: `SILICONFLOW_API_KEY` or `POLLINATIONS_API_KEY`, etc.  
 
-### Q: Does it support local deployment?
-A: Fully supports local deployment, can use Docker or direct installation. Supports Ollama local models without relying on external APIs.
+### Q: Image links break behind Nginx/Apache?
 
-### Q: How to export PPTX format?
-A: Need to configure `APRYSE_LICENSE_KEY`, then select PPTX format in export options.
+Without a correct `BASE_URL`, links may still use `localhost:8000`.
 
-### Q: How do I choose between standard PPTX and image-based PPTX?
-A: Standard PPTX depends on `APRYSE_LICENSE_KEY` and is better when you want to keep editing the deck. Image-based PPTX embeds rendered slide images, which preserves complex CSS, icons, and special layouts better, but slide elements are typically no longer editable.
+1. Open `https://your-domain.com/ai-config`  
+2. Application Configuration → Base URL  
+3. Save  
 
-### Q: How do I generate a public share link?
-A: Use the share action in the project editor or call `POST /api/projects/{project_id}/share/generate`. Shared URLs use the `/share/{share_token}` pattern and can be disabled later via `share/disable`.
+### Q: How does research work?
 
-### Q: How do I run development mode vs production compose?
-A: For production, use `docker compose up -d` with the bundled `docker-compose.yml` (pre-built image; includes web, worker, PostgreSQL, Valkey, and MinIO). For local development, use `docker compose -f docker-compose-dev.yaml up -d --build` to build locally with source mounts and hot reload.
+Configure `TAVILY_API_KEY` or a SearXNG instance, then enable research when creating a project.
 
-### Q: Which narration providers are supported?
-A: Edge-TTS is supported by default. You can also configure ComfyUI Qwen3-TD and upload reference audio for voice-cloning style workflows.
+### Q: Fully local deployment?
 
-##  License
+Yes—Docker or source install. Point inference at Ollama if you want no external LLM APIs (research / web images may still need network).
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+### Q: Standard PPTX vs image-based PPTX?
 
-##  Star History
+| Type | Dependency | Best for |
+|------|------------|----------|
+| Standard PPTX | `APRYSE_LICENSE_KEY` | Further editing in PowerPoint |
+| Image-based PPTX | No Apryse | Visual fidelity of complex layouts; elements usually not editable |
 
-[![Star History Chart](https://api.star-history.com/svg?repos=sligter/LandPPT&type=Date)](https://star-history.com/#sligter/LandPPT&Date)
+### Q: Public share links?
 
-##  Contact Us
+Use Share in the project editor, or `POST /api/projects/{project_id}/share/generate`. URL shape: `/share/{share_token}`. Disable via `share/disable`.
 
-- **Project Homepage**: https://github.com/sligter/LandPPT
-- **Issue Reporting**: https://github.com/sligter/LandPPT/issues
-- **Discussions**: https://github.com/sligter/LandPPT/discussions
+### Q: Production vs development Compose?
+
+- **Production:** `docker compose up -d` (pre-built image + Web/Worker/Postgres/Valkey/MinIO)  
+- **Development:** `docker compose -f docker-compose-dev.yaml up -d --build` (local build + hot reload)  
+
+### Q: Narration providers?
+
+Edge-TTS by default; optional ComfyUI Qwen3-TD with reference-audio upload.
+
+### Q: Does parallel generation hurt quality?
+
+No. Parallelism only changes scheduling; per-slide quality is unchanged. Providers may still rate-limit concurrency.
+
+---
+
+## Contributing
+
+Issues, PRs, and docs improvements are welcome.
+
+1. Fork the repo  
+2. Branch: `git checkout -b feature/AmazingFeature`  
+3. Commit: `git commit -m 'Add some AmazingFeature'`  
+4. Push and open a Pull Request  
+
+Bugs & ideas: [Issues](https://github.com/sligter/LandPPT/issues)
+
+---
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
+
+> Third-party components such as Apryse (used for standard PPTX export) have their own terms—ensure compliance before use.
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=sligter/LandPPT&type=Date)](https://www.star-history.com/#sligter/LandPPT&Date)
+
+---
+
+## Contact
+
+- **Homepage**: https://github.com/sligter/LandPPT  
+- **Issues**: https://github.com/sligter/LandPPT/issues  
+- **Discussions**: https://github.com/sligter/LandPPT/discussions  
+- **Email**: [ai@yydsapp.com](mailto:ai@yydsapp.com)  
 
 ---
 
 <div align="center">
 
-**If this project helps you, please give us a :star:!**
+**If this project helps you, please give it a :star:!**
 
 Made with :heart: by the LandPPT Team
 

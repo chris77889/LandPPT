@@ -5,7 +5,9 @@ from fastapi import HTTPException
 
 from landppt.services.slide.slide_edit_agent_service import (
     SlideEditAgentApplyRequest,
+    SlideEditAgentCancelRequest,
     SlideEditAgentRequest,
+    agent_run_registry,
     compute_slide_html_hash,
 )
 from landppt.web.route_modules import slide_edit_agent_routes as routes
@@ -228,21 +230,37 @@ async def test_apply_agent_proposal_rejects_invalid_html_before_save(
     assert expected_error in exc.value.detail["errors"]
 
 
-@pytest.mark.asyncio
-async def test_stream_slide_edit_agent_charges_once_after_draft(monkeypatch):
+def _agent_request(**overrides):
+    data = {
+        "projectId": "proj",
+        "slideIndex": 1,
+        "slideTitle": "One",
+        "slideContent": "<div>Current</div>",
+        "userRequest": "Shorten the title",
+    }
+    data.update(overrides)
+    return SlideEditAgentRequest(**data)
+
+
+def _finished_event(**overrides):
+    event = {
+        "type": "run_finished",
+        "status": "completed",
+        "summary": "done",
+        "iterationsUsed": 2,
+        "proposal": {"proposalId": "p1"},
+    }
+    event.update(overrides)
+    return event
+
+
+def _patch_billing(monkeypatch, service=None, agent_service=None):
+    """装好积分与依赖桩，返回 (check 记录, charge 记录)。"""
+    checks = []
     charges = []
 
-    class _FakeAgentService:
-        async def run_agent(self, request, user_ppt_service, event_callback):
-            await event_callback({"type": "agent_start"})
-            await event_callback(
-                {"type": "draft_ready", "proposal": {"proposalId": "p1"}}
-            )
-            await event_callback({"type": "final", "proposalId": "p1"})
-            await event_callback({"type": "needs_confirmation", "proposalId": "p1"})
-            return SimpleNamespace(proposal_id="p1")
-
     async def check_credits(*args, **kwargs):
+        checks.append(kwargs.get("provider_name"))
         return True, 1, 10
 
     async def consume_credits(*args, **kwargs):
@@ -250,171 +268,183 @@ async def test_stream_slide_edit_agent_charges_once_after_draft(monkeypatch):
         return True, "ok"
 
     monkeypatch.setattr(
-        routes, "get_ppt_service_for_user", lambda user_id: _FakePPTService()
+        routes, "get_ppt_service_for_user", lambda user_id: service or _FakePPTService()
     )
     monkeypatch.setattr(routes, "check_credits_for_operation", check_credits)
     monkeypatch.setattr(routes, "consume_credits_for_operation", consume_credits)
-    monkeypatch.setattr(routes, "SlideEditAgentService", _FakeAgentService)
+    if agent_service is not None:
+        monkeypatch.setattr(routes, "SlideEditAgentService", agent_service)
+    return checks, charges
+
+
+@pytest.mark.asyncio
+async def test_stream_slide_edit_agent_charges_once_after_the_run_finishes(monkeypatch):
+    class _FakeAgentService:
+        async def run_agent(self, request, user_ppt_service, event_callback, handle=None):
+            await event_callback({"type": "run_started", "runId": request.runId})
+            await event_callback({"type": "draft_updated", "revision": 1})
+            await event_callback(_finished_event())
+
+    _, charges = _patch_billing(monkeypatch, agent_service=_FakeAgentService)
 
     response = await routes.stream_slide_edit_agent(
-        SlideEditAgentRequest(
-            projectId="proj",
-            slideIndex=1,
-            slideTitle="One",
-            slideContent="<div>Current</div>",
-            userRequest="Shorten the title",
-        ),
-        user=SimpleNamespace(id=10),
+        _agent_request(), user=SimpleNamespace(id=10)
     )
-
     body = await _collect_stream_body(response)
 
-    assert '"type": "draft_ready"' in body
+    assert '"type": "run_finished"' in body
     assert len(charges) == 1
     assert charges[0]["args"][:3] == (10, "ai_edit", 1)
     assert charges[0]["kwargs"]["reference_id"] == "proj"
 
 
 @pytest.mark.asyncio
-async def test_stream_slide_edit_agent_charges_before_billable_chunk(monkeypatch):
-    charges = []
-
+async def test_stream_slide_edit_agent_charges_before_yielding_the_billable_chunk(monkeypatch):
     class _FakeAgentService:
-        async def run_agent(self, request, user_ppt_service, event_callback):
-            await event_callback(
-                {"type": "draft_ready", "proposal": {"proposalId": "p1"}}
-            )
-            return SimpleNamespace(proposal_id="p1")
+        async def run_agent(self, request, user_ppt_service, event_callback, handle=None):
+            await event_callback(_finished_event())
 
-    async def check_credits(*args, **kwargs):
-        return True, 1, 10
-
-    async def consume_credits(*args, **kwargs):
-        charges.append({"args": args, "kwargs": kwargs})
-        return True, "ok"
-
-    monkeypatch.setattr(
-        routes, "get_ppt_service_for_user", lambda user_id: _FakePPTService()
-    )
-    monkeypatch.setattr(routes, "check_credits_for_operation", check_credits)
-    monkeypatch.setattr(routes, "consume_credits_for_operation", consume_credits)
-    monkeypatch.setattr(routes, "SlideEditAgentService", _FakeAgentService)
+    _, charges = _patch_billing(monkeypatch, agent_service=_FakeAgentService)
 
     response = await routes.stream_slide_edit_agent(
-        SlideEditAgentRequest(
-            projectId="proj",
-            slideIndex=1,
-            slideTitle="One",
-            slideContent="<div>Current</div>",
-            userRequest="Shorten the title",
-        ),
-        user=SimpleNamespace(id=10),
+        _agent_request(), user=SimpleNamespace(id=10)
     )
 
     first_chunk = await anext(response.body_iterator)
     if isinstance(first_chunk, bytes):
         first_chunk = first_chunk.decode("utf-8")
 
-    assert '"type": "draft_ready"' in first_chunk
+    assert '"type": "run_finished"' in first_chunk
     assert len(charges) == 1
 
     await _collect_stream_body(response)
 
 
 @pytest.mark.asyncio
-async def test_stream_slide_edit_agent_uses_editor_provider_without_vision_inputs(
-    monkeypatch,
-):
+async def test_stream_slide_edit_agent_uses_editor_provider_without_vision_inputs(monkeypatch):
     service = _FakePPTService(
-        providers={
-            "editor": "editor-provider",
-            "vision_analysis": "vision-provider",
-        }
+        providers={"editor": "editor-provider", "vision_analysis": "vision-provider"}
     )
-    check_provider_names = []
-    charge_provider_names = []
 
     class _FakeAgentService:
-        async def run_agent(self, request, user_ppt_service, event_callback):
-            await event_callback(
-                {"type": "draft_ready", "proposal": {"proposalId": "p1"}}
-            )
-            return SimpleNamespace(proposal_id="p1")
+        async def run_agent(self, request, user_ppt_service, event_callback, handle=None):
+            await event_callback(_finished_event())
 
-    async def check_credits(*args, **kwargs):
-        check_provider_names.append(kwargs.get("provider_name"))
-        return True, 1, 10
-
-    async def consume_credits(*args, **kwargs):
-        charge_provider_names.append(kwargs.get("provider_name"))
-        return True, "ok"
-
-    monkeypatch.setattr(routes, "get_ppt_service_for_user", lambda user_id: service)
-    monkeypatch.setattr(routes, "check_credits_for_operation", check_credits)
-    monkeypatch.setattr(routes, "consume_credits_for_operation", consume_credits)
-    monkeypatch.setattr(routes, "SlideEditAgentService", _FakeAgentService)
-
-    response = await routes.stream_slide_edit_agent(
-        SlideEditAgentRequest(
-            projectId="proj",
-            slideIndex=1,
-            slideContent="<div>Current</div>",
-            userRequest="Shorten the title",
-            visionEnabled=True,
-        ),
-        user=SimpleNamespace(id=10),
+    checks, charges = _patch_billing(
+        monkeypatch, service=service, agent_service=_FakeAgentService
     )
 
+    response = await routes.stream_slide_edit_agent(
+        _agent_request(visionEnabled=True), user=SimpleNamespace(id=10)
+    )
     body = await _collect_stream_body(response)
 
-    assert '"type": "draft_ready"' in body
+    assert '"type": "run_finished"' in body
     assert service.roles == ["editor"]
-    assert check_provider_names == ["editor-provider"]
-    assert charge_provider_names == ["editor-provider"]
+    assert checks == ["editor-provider"]
+    assert [charge["kwargs"]["provider_name"] for charge in charges] == ["editor-provider"]
 
 
 @pytest.mark.asyncio
-async def test_stream_slide_edit_agent_does_not_charge_without_draft(monkeypatch):
-    charges = []
-
+async def test_stream_slide_edit_agent_does_not_charge_a_failed_run(monkeypatch):
     class _FakeAgentService:
-        async def run_agent(self, request, user_ppt_service, event_callback):
-            await event_callback({"type": "agent_start"})
+        async def run_agent(self, request, user_ppt_service, event_callback, handle=None):
+            await event_callback({"type": "run_started", "runId": request.runId})
             raise RuntimeError("model unavailable")
 
-    async def check_credits(*args, **kwargs):
-        return True, 1, 10
-
-    async def consume_credits(*args, **kwargs):
-        charges.append({"args": args, "kwargs": kwargs})
-        return True, "ok"
-
-    monkeypatch.setattr(
-        routes, "get_ppt_service_for_user", lambda user_id: _FakePPTService()
-    )
-    monkeypatch.setattr(routes, "check_credits_for_operation", check_credits)
-    monkeypatch.setattr(routes, "consume_credits_for_operation", consume_credits)
-    monkeypatch.setattr(routes, "SlideEditAgentService", _FakeAgentService)
+    _, charges = _patch_billing(monkeypatch, agent_service=_FakeAgentService)
 
     response = await routes.stream_slide_edit_agent(
-        SlideEditAgentRequest(
-            projectId="proj",
-            slideIndex=1,
-            slideContent="<div>Current</div>",
-            userRequest="Shorten the title",
-        ),
-        user=SimpleNamespace(id=10),
+        _agent_request(), user=SimpleNamespace(id=10)
     )
-
     body = await _collect_stream_body(response)
 
-    assert '"type": "error"' in body
+    assert '"status": "failed"' in body
     assert "model unavailable" in body
     assert charges == []
 
 
 @pytest.mark.asyncio
-async def test_cancel_slide_edit_agent_returns_success():
-    result = await routes.cancel_slide_edit_agent(user=SimpleNamespace(id=10))
+async def test_stream_slide_edit_agent_does_not_charge_a_run_stopped_before_any_model_call(
+    monkeypatch,
+):
+    class _FakeAgentService:
+        async def run_agent(self, request, user_ppt_service, event_callback, handle=None):
+            await event_callback(
+                _finished_event(status="cancelled", iterationsUsed=0, proposal=None)
+            )
 
-    assert result == {"success": True}
+    _, charges = _patch_billing(monkeypatch, agent_service=_FakeAgentService)
+
+    response = await routes.stream_slide_edit_agent(
+        _agent_request(), user=SimpleNamespace(id=10)
+    )
+    body = await _collect_stream_body(response)
+
+    assert '"status": "cancelled"' in body
+    assert charges == []
+
+
+@pytest.mark.asyncio
+async def test_stream_slide_edit_agent_registers_a_cancellable_run_and_releases_it(monkeypatch):
+    seen = {}
+
+    class _FakeAgentService:
+        async def run_agent(self, request, user_ppt_service, event_callback, handle=None):
+            seen["runId"] = request.runId
+            seen["handle"] = handle
+            seen["registered"] = agent_run_registry.get(request.runId) is handle
+            await event_callback(_finished_event())
+
+    _patch_billing(monkeypatch, agent_service=_FakeAgentService)
+
+    response = await routes.stream_slide_edit_agent(
+        _agent_request(runId="run-abc"), user=SimpleNamespace(id=10)
+    )
+    await _collect_stream_body(response)
+
+    assert seen["runId"] == "run-abc"
+    assert seen["registered"] is True
+    assert seen["handle"].user_id == 10
+    # 流结束后要把 run 从注册表摘掉，否则会一直泄漏。
+    assert agent_run_registry.get("run-abc") is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_slide_edit_agent_signals_the_running_agent():
+    handle = agent_run_registry.register("run-to-cancel", 10)
+    try:
+        result = await routes.cancel_slide_edit_agent(
+            SlideEditAgentCancelRequest(runId="run-to-cancel"),
+            user=SimpleNamespace(id=10),
+        )
+
+        assert result == {"success": True, "cancelled": True, "runId": "run-to-cancel"}
+        assert handle.cancelled is True
+    finally:
+        agent_run_registry.release("run-to-cancel")
+
+
+@pytest.mark.asyncio
+async def test_cancel_slide_edit_agent_refuses_another_users_run():
+    handle = agent_run_registry.register("run-of-other-user", 99)
+    try:
+        result = await routes.cancel_slide_edit_agent(
+            SlideEditAgentCancelRequest(runId="run-of-other-user"),
+            user=SimpleNamespace(id=10),
+        )
+
+        assert result["cancelled"] is False
+        assert handle.cancelled is False
+    finally:
+        agent_run_registry.release("run-of-other-user")
+
+
+@pytest.mark.asyncio
+async def test_cancel_slide_edit_agent_tolerates_unknown_run_ids():
+    result = await routes.cancel_slide_edit_agent(
+        SlideEditAgentCancelRequest(runId="run-does-not-exist"),
+        user=SimpleNamespace(id=10),
+    )
+
+    assert result == {"success": True, "cancelled": False, "runId": "run-does-not-exist"}

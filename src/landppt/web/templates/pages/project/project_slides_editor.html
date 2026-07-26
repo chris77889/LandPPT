@@ -17,9 +17,9 @@
     <!-- CodeMirror Search Dialog CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/dialog/dialog.min.css">
     <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.css?v=20260613-thumbnail-fill-v1">
-    <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.aiSidebar.css?v=20260707-compact-empty-v1">
+    <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.aiSidebar.css?v=20260726-agent-loop-v2">
     <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.nativeChat.css?v=20260402-split">
-    <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.quickEdit.css?v=20260614-modalui3">
+    <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.quickEdit.css?v=20260726-agent-loop-v2">
     <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.imageLibrary.css?v=20260402-split">
     <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.speechDialog.css?v=20260402-split">
     <link rel="stylesheet" href="/static/css/pages/project/slides_editor/projectSlidesEditor.speechModal.css?v=20260402-split">
@@ -390,6 +390,7 @@
                 </button>
             </div>
             <div class="quick-ai-edit-status" id="quickAiEditStatus" aria-live="polite"></div>
+            <div class="quick-ai-edit-result" id="quickAiEditResult"></div>
         </div>
     </div>
 
@@ -723,16 +724,17 @@
     <script src="/static/js/dom-to-pptx.bundle.js?v=20260709-hybrid-raster-v2"></script>
     <script src="/static/js/pages/project/slides_editor/projectEditorShareExport.js?v=20260707-queued-export-v1"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.core.js?v=20260613-thumbnail-fill-v1"></script>
+    <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.agentClient.js?v=20260726-agent-loop-v2"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.quickEdit.js?v=20260408-quick-reset-v2"></script>
-    <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.quickAi.js?v=20260402-split"></script>
+    <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.quickAi.js?v=20260726-agent-loop-v2"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.quickEditActions.js?v=20260408-quick-reset-v2"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.quickEditStyling.js?v=20260408-quick-reset-v2"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.slideImageOps.js?v=20260408-split-preview-fix-v1"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.slideMediaUi.js?v=20260402-split"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.pretextBridge.js?v=20260406-pretext"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.nativeChat.js?v=20260402-split"></script>
-    <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.aiChat.js?v=20260707-agent-collapse-v1"></script>
-    <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.aiApply.js?v=20260705-agent-apply"></script>
+    <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.aiChat.js?v=20260726-agent-loop-v2"></script>
+    <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.aiApply.js?v=20260726-agent-loop-v2"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.slideGeneration.js?v=20260408-quick-reset-v2"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.changeTemplate.js?v=20260408-free-template-list-v2"></script>
     <script src="/static/js/pages/project/slides_editor/projectSlidesEditor.slideshow.js?v=20260402-split"></script>

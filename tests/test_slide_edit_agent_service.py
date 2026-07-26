@@ -3,53 +3,37 @@ from types import SimpleNamespace
 
 import pytest
 
-from landppt.ai.base import ImageContent, TextContent
+from landppt.ai.base import AIResponse, ImageContent, MessageRole, TextContent
+from landppt.services.slide.edit_agent import prompt as agent_prompt
 from landppt.services.slide.slide_edit_agent_service import (
+    DraftRefError,
+    SlideDraft,
     SlideEditAgentContext,
     SlideEditAgentRequest,
     SlideEditAgentService,
-    SlideEditToolRunner,
-    compute_slide_html_hash,
+    SlideEditToolbox,
+    ToolProtocol,
+    ToolProtocolRegistry,
+    agent_run_registry,
     coerce_agent_max_iterations,
-    parse_agent_action,
+    compute_slide_html_hash,
     sanitize_slide_html,
     strip_agent_ids,
+    tool_protocol_registry,
     validate_slide_html,
 )
 
-
-def test_parse_agent_action_supports_json_code_fence():
-    action = parse_agent_action(
-        "```json\n"
-        + json.dumps(
-            {
-                "thought": "Inspect the slide before editing.",
-                "action": "inspect_slide_html",
-                "action_input": {"slide_index": 1},
-            }
-        )
-        + "\n```"
-    )
-
-    assert action.thought == "Inspect the slide before editing."
-    assert action.action == "inspect_slide_html"
-    assert action.action_input == {"slide_index": 1}
+BASE_HTML = (
+    '<div class="slide" style="width:1280px;height:720px">'
+    '<h1 class="title" style="color:#111">Long Original Title</h1>'
+    '<ul class="points"><li>Alpha</li><li>Beta</li></ul>'
+    "</div>"
+)
 
 
-def test_parse_agent_action_falls_back_to_final_for_unparseable_text():
-    action = parse_agent_action("I cannot parse this as JSON.")
-
-    assert action.action == "final"
-    assert action.action_input["summary"] == "I cannot parse this as JSON."
-
-
-def test_coerce_agent_max_iterations_defaults_and_clamps():
-    assert coerce_agent_max_iterations(None) == 6
-    assert coerce_agent_max_iterations(1) == 2
-    assert coerce_agent_max_iterations(8) == 8
-    assert coerce_agent_max_iterations(99) == 99
-    assert coerce_agent_max_iterations(999) == 100
-    assert coerce_agent_max_iterations("bad") == 6
+# ---------------------------------------------------------------------------
+# HTML 安全
+# ---------------------------------------------------------------------------
 
 
 def test_compute_slide_html_hash_is_stable_for_equivalent_text():
@@ -124,795 +108,764 @@ def test_validate_slide_html_accepts_clean_slide_html():
     assert "Hello" in result.sanitized_html
 
 
-def _tool_request(**overrides):
+def test_coerce_agent_max_iterations_defaults_and_clamps():
+    assert coerce_agent_max_iterations(None) == 12
+    assert coerce_agent_max_iterations(1) == 2
+    assert coerce_agent_max_iterations(8) == 8
+    assert coerce_agent_max_iterations(999) == 100
+    assert coerce_agent_max_iterations("bad") == 12
+
+
+# ---------------------------------------------------------------------------
+# SlideDraft
+# ---------------------------------------------------------------------------
+
+
+def test_draft_refs_are_never_written_into_html():
+    draft = SlideDraft(BASE_HTML)
+    matches = draft.find(selector="h1")
+
+    assert len(matches) == 1
+    assert matches[0].ref.startswith("e")
+    assert "data-agent-id" not in draft.html
+    assert draft.html == BASE_HTML
+    assert draft.changed is False
+
+
+def test_draft_ref_survives_edits_to_other_elements():
+    draft = SlideDraft(BASE_HTML)
+    title_ref = draft.find(selector="h1")[0].ref
+    list_node = draft.resolve(selector="ul")
+
+    draft.begin_mutation()
+    list_node.append(draft.parse_fragment("<li>Gamma</li>")[0])
+    draft.commit_mutation()
+
+    assert draft.resolve(ref=title_ref).name == "h1"
+
+
+def test_draft_reports_stale_ref_after_removal():
+    draft = SlideDraft(BASE_HTML)
+    ref = draft.find(selector="li")[0].ref
+    node = draft.resolve(ref=ref)
+
+    draft.begin_mutation()
+    node.decompose()
+    draft.commit_mutation()
+
+    with pytest.raises(DraftRefError) as exc:
+        draft.resolve(ref=ref)
+    assert "removed by an earlier edit" in str(exc.value)
+
+
+def test_draft_undo_restores_previous_html():
+    draft = SlideDraft(BASE_HTML)
+    node = draft.resolve(selector="h1")
+
+    draft.begin_mutation()
+    node.string = "Short"
+    draft.commit_mutation()
+    assert "Short" in draft.html
+
+    assert draft.undo() is True
+    assert draft.html == BASE_HTML
+    assert draft.undo() is False
+
+
+def test_draft_diff_reports_changed_lines_only():
+    draft = SlideDraft(BASE_HTML)
+    node = draft.resolve(selector="h1")
+
+    draft.begin_mutation()
+    node.string = "Short"
+    draft.commit_mutation()
+
+    diff = draft.diff()
+    changed = [line for line in diff["diff"].split("\n") if line[:1] in {"+", "-"}]
+
+    assert diff["changed"] is True
+    # 只有 <h1> 那一行进出，未改动的列表项仅作为上下文出现。
+    assert [line[:4] for line in changed] == ["--- ", "+++ ", "-<h1", "+<h1"]
+    assert "Long Original Title" in changed[2]
+    assert "Short" in changed[3]
+
+
+def test_draft_invalid_selector_raises_structured_error():
+    draft = SlideDraft(BASE_HTML)
+
+    with pytest.raises(DraftRefError) as exc:
+        draft.find(selector="h1[")
+    assert "invalid selector" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 工具集
+# ---------------------------------------------------------------------------
+
+
+def _request(**overrides):
     data = {
         "projectId": "p1",
         "slideIndex": 1,
         "userRequest": "Make the title shorter",
         "slideTitle": "Original",
-        "slideContent": '<div style="width:1280px;height:720px"><h1>Long Original Title</h1><p>Body</p></div>',
+        "slideContent": BASE_HTML,
         "projectInfo": {"title": "Project", "topic": "Topic", "scenario": "Pitch"},
-        "slideOutline": {"title": "Original", "content_points": ["Body"]},
+        "slideOutline": {"title": "Original", "content_points": ["Alpha"]},
     }
     data.update(overrides)
     return SlideEditAgentRequest(**data)
 
 
-def _tool_context(**overrides):
-    request = _tool_request(**overrides)
-    return SlideEditAgentContext.from_request(request)
+def _toolbox(**overrides):
+    context = SlideEditAgentContext.from_request(_request(**overrides))
+    draft = SlideDraft(context.base_html)
+    return SlideEditToolbox(context, draft), draft
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_inspects_slide_html():
-    runner = SlideEditToolRunner(_tool_context())
+def test_tool_schemas_cover_every_handler_and_stay_in_sync():
+    toolbox, _ = _toolbox()
+    native = {item["function"]["name"] for item in SlideEditToolbox.native_schemas()}
+    text = {item["name"] for item in SlideEditToolbox.text_reference()}
 
-    result = await runner.execute_tool("inspect_slide_html", {"slide_index": 1})
-
-    assert result["success"] is True
-    assert result["tool"] == "inspect_slide_html"
-    assert result["headings"][0]["text"] == "Long Original Title"
-    assert result["text_blocks"]
+    assert native == set(SlideEditToolbox.tool_names())
+    assert text == native
 
 
-@pytest.mark.asyncio
-async def test_compact_observation_keeps_tool_results_needed_by_model():
-    service = SlideEditAgentService()
-    runner = SlideEditToolRunner(_tool_context())
+def test_read_slide_returns_structure_with_usable_refs():
+    toolbox, draft = _toolbox()
 
-    inspect_result = await runner.execute_tool("inspect_slide_html", {})
-    inspect_compact = service._compact_observation(inspect_result)
+    result = toolbox.execute("read_slide", {})
 
-    assert inspect_compact["headings"][0]["text"] == "Long Original Title"
-
-    select_result = await runner.execute_tool("select_elements", {"selector": "h1"})
-    select_compact = service._compact_observation(select_result)
-
-    assert select_compact["matches"][0]["agent_id"].startswith("agent-el-")
-
-    slide_result = await runner.execute_tool("get_slide", {})
-    slide_compact = service._compact_observation(slide_result)
-
-    assert "html_content" in slide_compact["slide"]
+    assert result.ok is True
+    refs = [entry["ref"] for entry in result.data["structure"]]
+    assert refs
+    assert draft.resolve(ref=refs[0]).name == "div"
+    assert "html" not in result.data
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_replace_slide_html_updates_draft_not_base():
-    context = _tool_context()
-    runner = SlideEditToolRunner(context)
-    original_hash = context.base_hash
+def test_read_slide_can_include_bounded_html():
+    toolbox, _ = _toolbox()
 
-    result = await runner.execute_tool(
-        "replace_slide_html",
-        {"html": '<div style="width:1280px;height:720px"><h1>New</h1></div>'},
+    result = toolbox.execute("read_slide", {"include_html": True, "max_chars": 40})
+
+    assert result.data["html_truncated"] is True
+    assert len(result.data["html"]) == 40
+
+
+def test_set_text_refuses_to_silently_delete_child_elements():
+    toolbox, draft = _toolbox()
+
+    result = toolbox.execute("set_text", {"selector": "ul", "text": "oops"})
+
+    assert result.ok is False
+    assert "child element" in result.summary
+    assert draft.html == BASE_HTML
+
+
+def test_set_text_replaces_children_when_explicitly_allowed():
+    toolbox, draft = _toolbox()
+
+    result = toolbox.execute(
+        "set_text", {"selector": "ul", "text": "oops", "replace_children": True}
     )
 
-    assert result["success"] is True
-    assert "New" in runner.current_html
-    assert context.base_hash == original_hash
-    assert "Long Original Title" in context.base_html
+    assert result.ok is True
+    assert "<li>" not in draft.html
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_replace_slide_html_rejects_invalid_without_mutating_draft():
-    runner = SlideEditToolRunner(_tool_context())
-    original_html = runner.current_html
+def test_set_style_allows_layout_properties_the_old_whitelist_blocked():
+    toolbox, draft = _toolbox()
 
-    result = await runner.execute_tool(
-        "replace_slide_html",
-        {"html": '<div style="width:1280px;height:720px"><script>alert(1)</script><h1>Bad</h1></div>'},
+    result = toolbox.execute(
+        "set_style",
+        {"selector": "ul", "styles": {"gap": "12px", "grid-template-columns": "1fr 1fr"}},
     )
 
-    assert result["success"] is False
-    assert result["tool"] == "replace_slide_html"
-    assert "script tags are not allowed" in result["errors"]
-    assert runner.current_html == original_html
+    assert result.ok is True
+    assert "gap: 12px" in draft.html
+    assert "grid-template-columns: 1fr 1fr" in draft.html
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_updates_text_by_selector():
-    runner = SlideEditToolRunner(_tool_context())
+def test_set_style_rejects_unsafe_values_without_mutating_draft():
+    toolbox, draft = _toolbox()
 
-    result = await runner.execute_tool("update_text", {"selector": "h1", "text": "Short Title"})
-
-    assert result["success"] is True
-    assert "Short Title" in runner.current_html
-    assert "Long Original Title" not in runner.current_html
-
-
-@pytest.mark.asyncio
-async def test_tool_runner_selector_takes_priority_over_selected_element_context():
-    runner = SlideEditToolRunner(
-        _tool_context(
-            mode="element",
-            slideContent=(
-                '<div style="width:1280px;height:720px">'
-                '<h1 data-quick-ai-id="el1">Long Original Title</h1><p>Body</p>'
-                "</div>"
-            ),
-            selectedElementId="el1",
-        )
+    result = toolbox.execute(
+        "set_style",
+        {"selector": "h1", "styles": {"background": "url(javascript:alert(1))"}},
     )
 
-    result = await runner.execute_tool("update_text", {"selector": "p", "text": "Updated Body"})
-
-    assert result["success"] is True
-    assert "Long Original Title" in runner.current_html
-    assert "Updated Body" in runner.current_html
+    assert result.ok is False
+    assert draft.html == BASE_HTML
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_update_style_uses_css_whitelist():
-    runner = SlideEditToolRunner(_tool_context())
+def test_set_style_merge_keeps_existing_declarations():
+    toolbox, draft = _toolbox()
 
-    result = await runner.execute_tool(
-        "update_style",
-        {
-            "selector": "h1",
-            "styles": {
-                "color": "#123456",
-                "font-size": "48px",
-                "position": "fixed",
-                "behavior": "url(bad)",
-            },
-        },
+    toolbox.execute("set_style", {"selector": "h1", "styles": {"font-size": "40px"}})
+
+    assert "color: #111" in draft.html
+    assert "font-size: 40px" in draft.html
+
+
+def test_set_style_replace_drops_existing_declarations():
+    toolbox, draft = _toolbox()
+
+    toolbox.execute(
+        "set_style", {"selector": "h1", "styles": {"font-size": "40px"}, "mode": "replace"}
     )
 
-    assert result["success"] is True
-    assert "color: #123456" in runner.current_html
-    assert "font-size: 48px" in runner.current_html
-    assert "position: fixed" not in runner.current_html
-    assert "behavior" not in runner.current_html
+    assert "color" not in draft.html.split("<h1")[1].split(">")[0]
+    assert "font-size: 40px" in draft.html
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_replaces_element_and_preserves_quick_ai_id_in_draft():
-    runner = SlideEditToolRunner(
-        _tool_context(
-            mode="element",
-            slideContent=(
-                '<div style="width:1280px;height:720px">'
-                '<h1 data-quick-ai-id="el1">Long Original Title</h1><p>Body</p>'
-                "</div>"
-            ),
-            selectedElementHtml='<h1 data-quick-ai-id="el1">Long Original Title</h1>',
-            selectedElementId="el1",
-        )
+def test_set_attributes_rejects_event_handlers_but_applies_safe_ones():
+    toolbox, draft = _toolbox()
+
+    result = toolbox.execute(
+        "set_attributes",
+        {"selector": "h1", "attributes": {"onclick": "bad()", "data-role": "title"}},
     )
 
-    result = await runner.execute_tool(
-        "replace_element_html",
-        {"element_id": "el1", "html": '<h1 data-quick-ai-id="el1">Short Title</h1>'},
+    assert result.ok is True
+    assert "onclick" in result.data["rejected"]
+    assert 'data-role="title"' in draft.html
+
+
+def test_set_attributes_removes_attribute_on_empty_value():
+    toolbox, draft = _toolbox()
+
+    toolbox.execute("set_attributes", {"selector": "h1", "attributes": {"class": ""}})
+
+    assert 'class="title"' not in draft.html
+
+
+@pytest.mark.parametrize(
+    "position,expected",
+    [
+        ("append", "<li>Alpha</li><li>Beta</li><li>New</li>"),
+        ("prepend", "<li>New</li><li>Alpha</li><li>Beta</li>"),
+    ],
+)
+def test_insert_html_positions(position, expected):
+    toolbox, draft = _toolbox()
+
+    result = toolbox.execute(
+        "insert_html", {"selector": "ul", "position": position, "html": "<li>New</li>"}
     )
 
-    assert result["success"] is True
-    assert 'data-quick-ai-id="el1"' in runner.current_html
-    assert "Short Title" in runner.current_html
+    assert result.ok is True
+    assert expected in draft.html
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_replace_element_by_selector_preserves_target_id_only():
-    runner = SlideEditToolRunner(
-        _tool_context(
-            mode="element",
-            slideContent=(
-                '<div style="width:1280px;height:720px">'
-                '<h1 data-quick-ai-id="el1">Long Original Title</h1>'
-                '<p data-quick-ai-id="body1">Body</p>'
-                "</div>"
-            ),
-            selectedElementId="el1",
-        )
+def test_insert_html_rejects_unsafe_fragment_without_mutating_draft():
+    toolbox, draft = _toolbox()
+
+    result = toolbox.execute(
+        "insert_html",
+        {"selector": "ul", "position": "append", "html": "<li onclick='x()'>bad</li>"},
     )
 
-    result = await runner.execute_tool(
-        "replace_element_html",
-        {"selector": "p", "html": "<p>Updated Body</p>"},
+    assert result.ok is False
+    assert draft.html == BASE_HTML
+
+
+def test_replace_element_preserves_quick_ai_id_of_the_target():
+    toolbox, draft = _toolbox(
+        slideContent='<div><h1 data-quick-ai-id="q7">Old</h1></div>',
+        selectedElementId="q7",
     )
 
-    assert result["success"] is True
-    assert runner.current_html.count('data-quick-ai-id="el1"') == 1
-    assert 'data-quick-ai-id="body1"' in runner.current_html
-    assert "Updated Body" in runner.current_html
+    result = toolbox.execute("replace_element", {"html": "<h2>New</h2>"})
+
+    assert result.ok is True
+    assert 'data-quick-ai-id="q7"' in draft.html
+    assert "<h2" in draft.html
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_replace_element_missing_id_fails_without_mutating_draft():
-    runner = SlideEditToolRunner(
-        _tool_context(
-            mode="element",
-            selectedElementId="missing",
-        )
-    )
-    original_html = runner.current_html
-
-    result = await runner.execute_tool(
-        "replace_element_html",
-        {"element_id": "missing", "html": "<h1>Short Title</h1>"},
+def test_element_mode_tools_default_to_the_selected_element():
+    toolbox, draft = _toolbox(
+        slideContent='<div><h1 data-quick-ai-id="q7">Old</h1><p>Body</p></div>',
+        selectedElementId="q7",
+        mode="element",
     )
 
-    assert result["success"] is False
-    assert result["tool"] == "replace_element_html"
-    assert "not found" in result["error"]
-    assert runner.current_html == original_html
+    result = toolbox.execute("set_text", {"text": "New"})
+
+    assert result.ok is True
+    assert "<h1 data-quick-ai-id=\"q7\">New</h1>" in draft.html
+    assert "<p>Body</p>" in draft.html
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_update_text_missing_target_fails_without_mutating_draft():
-    runner = SlideEditToolRunner(_tool_context())
-    original_html = runner.current_html
+def test_missing_target_fails_without_mutating_draft():
+    toolbox, draft = _toolbox()
 
-    result = await runner.execute_tool("update_text", {"text": "Short Title"})
+    result = toolbox.execute("set_text", {"ref": "e999", "text": "x"})
 
-    assert result["success"] is False
-    assert result["tool"] == "update_text"
-    assert "requires" in result["error"]
-    assert runner.current_html == original_html
+    assert result.ok is False
+    assert "unknown element ref" in result.summary
+    assert draft.html == BASE_HTML
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_delete_element_missing_target_fails_without_mutating_draft():
-    runner = SlideEditToolRunner(_tool_context())
-    original_html = runner.current_html
+def test_replace_slide_rejects_invalid_html_without_mutating_draft():
+    toolbox, draft = _toolbox()
 
-    result = await runner.execute_tool("delete_element", {})
+    result = toolbox.execute("replace_slide", {"html": "<div><script>x</script></div>"})
 
-    assert result["success"] is False
-    assert result["tool"] == "delete_element"
-    assert "requires" in result["error"]
-    assert runner.current_html == original_html
+    assert result.ok is False
+    assert draft.html == BASE_HTML
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_replace_element_rejects_unsafe_fragment_without_mutating_draft():
-    runner = SlideEditToolRunner(
-        _tool_context(
-            mode="element",
-            slideContent=(
-                '<div style="width:1280px;height:720px">'
-                '<h1 data-quick-ai-id="el1">Long Original Title</h1><p>Body</p>'
-                "</div>"
-            ),
-            selectedElementId="el1",
-        )
-    )
-    original_html = runner.current_html
+def test_undo_last_edit_reverts_the_previous_tool_call():
+    toolbox, draft = _toolbox()
+    toolbox.execute("set_text", {"selector": "h1", "text": "Short"})
+    assert "Short" in draft.html
 
-    result = await runner.execute_tool(
-        "replace_element_html",
-        {"element_id": "el1", "html": '<h1 onclick="bad()">Bad</h1>'},
-    )
+    result = toolbox.execute("undo_last_edit", {})
 
-    assert result["success"] is False
-    assert "inline event handlers are not allowed" in result["errors"]
-    assert runner.current_html == original_html
+    assert result.ok is True
+    assert draft.html == BASE_HTML
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_insert_element_rejects_unsafe_fragment_without_mutating_draft():
-    runner = SlideEditToolRunner(_tool_context())
-    original_html = runner.current_html
+def test_unsupported_tool_reports_available_tools():
+    toolbox, _ = _toolbox()
 
-    result = await runner.execute_tool(
-        "insert_element",
-        {"parent_selector": "div", "html": "<h2><script>alert(1)</script>Bad</h2>"},
-    )
+    result = toolbox.execute("teleport", {})
 
-    assert result["success"] is False
-    assert "script tags are not allowed" in result["errors"]
-    assert runner.current_html == original_html
+    assert result.ok is False
+    assert "read_slide" in result.data["available_tools"]
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_insert_element_missing_target_fails_without_mutating_full_html_body():
-    html = (
-        "<!doctype html><html><head><title>Slide</title></head>"
-        '<body><section id="slide"><p>Body</p></section></body></html>'
-    )
-    runner = SlideEditToolRunner(_tool_context(slideContent=html))
-    original_html = runner.current_html
+def test_transcript_records_every_call_with_outcome():
+    toolbox, _ = _toolbox()
+    toolbox.execute("read_slide", {})
+    toolbox.execute("set_text", {"selector": "ul", "text": "oops"})
 
-    result = await runner.execute_tool("insert_element", {"html": "<p>New</p>"})
-
-    assert result["success"] is False
-    assert result["tool"] == "insert_element"
-    assert "requires parent_selector or element_id" in result["error"]
-    assert runner.current_html == original_html
-    assert "New" not in runner.current_html
+    assert [entry["tool"] for entry in toolbox.transcript] == ["read_slide", "set_text"]
+    assert [entry["ok"] for entry in toolbox.transcript] == [True, False]
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_insert_element_succeeds_with_explicit_parent_selector():
-    runner = SlideEditToolRunner(_tool_context())
-
-    result = await runner.execute_tool(
-        "insert_element",
-        {"parent_selector": "div", "html": "<h2>New Section</h2>"},
-    )
-
-    assert result["success"] is True
-    assert result["tool"] == "insert_element"
-    assert "<h2>New Section</h2>" in runner.current_html
+# ---------------------------------------------------------------------------
+# 协议选择
+# ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_tool_runner_invalid_selector_returns_structured_error():
-    runner = SlideEditToolRunner(_tool_context())
-    original_html = runner.current_html
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("400 invalid_request_error: Unsupported parameter: 'tools'", True),
+        ("Unknown parameter: tool_choice", True),
+        ("this model does not support function calling", True),
+        ("429 rate limit exceeded for tools tier", False),
+        ("connection reset by peer", False),
+        ("tool execution failed", False),
+    ],
+)
+def test_tool_parameter_rejection_detection_is_narrow(message, expected):
+    from landppt.services.slide.edit_agent import is_tool_parameter_rejection
 
-    result = await runner.execute_tool(
-        "update_text",
-        {"selector": "[", "text": "Short Title"},
+    assert is_tool_parameter_rejection(RuntimeError(message)) is expected
+
+
+def test_protocol_registry_defaults_to_native_and_caches_downgrades():
+    registry = ToolProtocolRegistry()
+    key = ToolProtocolRegistry.key_for("proxy", "mystery")
+
+    assert registry.preferred(key) is ToolProtocol.NATIVE
+
+    registry.mark_text_only(key, "ignored tool schemas")
+
+    assert registry.preferred(key) is ToolProtocol.TEXT
+    assert registry.downgrade_reason(key) == "ignored tool schemas"
+    assert registry.preferred(ToolProtocolRegistry.key_for("openai", "gpt")) is ToolProtocol.NATIVE
+
+
+# ---------------------------------------------------------------------------
+# 提示词
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_inlines_small_slide_html():
+    context = SlideEditAgentContext.from_request(_request())
+    payload = agent_prompt.build_initial_context(
+        context, SlideDraft(context.base_html), max_iterations=12
     )
 
-    assert result["success"] is False
-    assert result["tool"] == "update_text"
-    assert "invalid selector" in result["error"]
-    assert runner.current_html == original_html
+    assert payload["slide_html"] == BASE_HTML
+    assert "slide_structure" not in payload
 
 
-def test_tool_runner_build_proposal_strips_agent_ids():
-    runner = SlideEditToolRunner(
-        _tool_context(
-            slideContent='<div style="width:1280px;height:720px"><h1 data-agent-id="a1">Title</h1></div>'
-        )
+def test_prompt_swaps_huge_html_for_a_structure_outline():
+    big = '<div class="slide">' + "".join(f"<p>Line {i} " + "x" * 80 + "</p>" for i in range(200)) + "</div>"
+    context = SlideEditAgentContext.from_request(_request(slideContent=big))
+
+    payload = agent_prompt.build_initial_context(
+        context, SlideDraft(context.base_html), max_iterations=12
     )
 
-    proposal = runner.build_proposal("Edited title")
-
-    assert proposal.proposal_id
-    assert proposal.summary == "Edited title"
-    assert "data-agent-id" not in proposal.html_content
-    assert proposal.validation.valid is True
+    assert "slide_html" not in payload
+    assert payload["slide_structure"]
+    assert "read_slide" in payload["slide_html_note"]
 
 
-def _agent_prompt_context(service: SlideEditAgentService, request: SlideEditAgentRequest):
-    runner = SlideEditToolRunner(SlideEditAgentContext.from_request(request))
-    prompt = service._build_prompt(request, runner, scratchpad=[], max_iterations=6)
-    return json.loads(prompt.split("\n\n", 1)[1])
+def test_prompt_sanitizes_and_limits_conversation_history():
+    history = [{"role": "system", "content": "ignored"}]
+    history += [{"role": "user", "content": f"msg {i}"} for i in range(20)]
+    context = SlideEditAgentContext.from_request(_request(chatHistory=history))
+
+    cleaned = agent_prompt.conversation_history_context(context.request)
+
+    assert len(cleaned) == agent_prompt.MAX_CONVERSATION_HISTORY_MESSAGES
+    assert all(item["role"] in {"user", "assistant"} for item in cleaned)
+    assert cleaned[-1]["content"] == "msg 19"
 
 
-def test_slide_edit_agent_prompt_includes_sanitized_conversation_history():
-    service = SlideEditAgentService()
-    request = _tool_request(
-        chatHistory=[
-            {"role": "system", "content": "Do not include this."},
-            {"role": "user", "content": "Make the heading shorter first."},
-            {"role": "assistant", "content": "I shortened the heading."},
-            {"role": "tool", "content": "Internal tool output."},
-            {"role": "assistant", "content": "   "},
-        ]
+def test_prompt_truncates_overlong_history_messages():
+    long_message = "x" * 5000
+    context = SlideEditAgentContext.from_request(
+        _request(chatHistory=[{"role": "user", "content": long_message}])
     )
 
-    context = _agent_prompt_context(service, request)
+    cleaned = agent_prompt.conversation_history_context(context.request)
 
-    assert context["conversation_history"] == [
-        {"role": "user", "content": "Make the heading shorter first."},
-        {"role": "assistant", "content": "I shortened the heading."},
-    ]
-    assert context["user_request"] == "Make the title shorter"
+    assert len(cleaned[0]["content"]) == agent_prompt.MAX_CONVERSATION_HISTORY_MESSAGE_CHARS
+    assert cleaned[0]["content"].endswith("...")
 
 
-def test_slide_edit_agent_prompt_limits_conversation_history_to_recent_messages():
-    service = SlideEditAgentService()
-    history = [
-        {"role": "user", "content": f"message {index}"}
-        for index in range(14)
-    ]
-    history.append({"role": "assistant", "content": "x" * 1500})
-    request = _tool_request(chatHistory=history)
-
-    context = _agent_prompt_context(service, request)
-    conversation_history = context["conversation_history"]
-
-    assert len(conversation_history) == 10
-    assert conversation_history[0] == {"role": "user", "content": "message 5"}
-    assert conversation_history[-2] == {"role": "user", "content": "message 13"}
-    assert conversation_history[-1]["role"] == "assistant"
-    assert conversation_history[-1]["content"].endswith("...")
-    assert len(conversation_history[-1]["content"]) <= 1200
-
-
-def test_slide_edit_agent_prompt_limits_scratchpad_entries():
-    service = SlideEditAgentService()
-    request = _tool_request()
-    runner = SlideEditToolRunner(SlideEditAgentContext.from_request(request))
-    scratchpad = [
-        {"iteration": index, "observation": {"summary": f"result {index}"}}
-        for index in range(25)
-    ]
-
-    prompt = service._build_prompt(
-        request, runner, scratchpad=scratchpad, max_iterations=100
+def test_prompt_omits_data_urls_from_the_text_payload():
+    context = SlideEditAgentContext.from_request(
+        _request(slideScreenshot="data:image/png;base64,AAAA", visionEnabled=True)
     )
-    context = json.loads(prompt.split("\n\n", 1)[1])
 
-    assert context["max_iterations"] == 100
-    assert len(context["scratchpad"]) == 21
-    assert context["scratchpad"][0]["note"].startswith("5 earlier scratchpad")
-    assert context["scratchpad"][1]["iteration"] == 5
+    payload = agent_prompt.build_initial_context(
+        context, SlideDraft(context.base_html), max_iterations=12
+    )
+
+    assert payload["vision"]["attachments"][0]["url"] == "[attached data URL omitted from text prompt]"
+    assert payload["vision"]["attached_image_count"] == 1
 
 
-class _FakePPTService:
-    def __init__(self, responses):
-        self.responses = list(responses)
+# ---------------------------------------------------------------------------
+# 循环
+# ---------------------------------------------------------------------------
+
+
+def _response(content="", tool_calls=None):
+    return AIResponse(content=content, model="fake", usage={}, tool_calls=tool_calls or [])
+
+
+def _native_call(call_id, name, arguments):
+    return {"id": call_id, "function": {"name": name, "arguments": json.dumps(arguments)}}
+
+
+def _text_action(name, arguments, thought="because"):
+    return _response(
+        json.dumps({"thought": thought, "action": name, "action_input": arguments})
+    )
+
+
+class _ScriptedPPTService:
+    def __init__(self, script, provider="openai", model="m"):
+        self.script = list(script)
         self.calls = []
+        self._provider = provider
+        self._model = model
 
-    async def _chat_completion_for_role(self, role, messages, **kwargs):
-        self.calls.append((role, messages, kwargs))
-        return SimpleNamespace(content=self.responses.pop(0))
+    async def get_role_provider_async(self, role):
+        return None, {"provider": self._provider, "model": self._model}
 
-
-class _FakeNativeToolPPTService:
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls = []
-
-    async def _chat_completion_for_role(self, role, messages, **kwargs):
-        self.calls.append((role, messages, kwargs))
-        return self.responses.pop(0)
-
-
-class _NoNativeToolPPTService(_FakePPTService):
-    async def _chat_completion_for_role(self, role, messages, **kwargs):
-        if kwargs.get("tools"):
-            raise RuntimeError("unsupported parameter: tools")
-        return await super()._chat_completion_for_role(role, messages, **kwargs)
+    async def _chat_completion_for_role(self, role, **kwargs):
+        # 适配器会持续复用同一个 messages 列表，这里必须快照，否则断言看到的是终态。
+        self.calls.append({"role": role, **kwargs, "messages": list(kwargs["messages"])})
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
-class _FailingPPTService:
-    async def _chat_completion_for_role(self, role, messages, **kwargs):
-        raise RuntimeError("model unavailable")
+async def _run(service, request, handle=None, cancel_on=None):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        if cancel_on and handle and event["type"] == cancel_on:
+            handle.cancel("test")
+
+    result = await SlideEditAgentService().run_agent(request, service, emit, handle=handle)
+    return result, events
+
+
+@pytest.fixture(autouse=True)
+def _reset_protocol_registry():
+    tool_protocol_registry.reset()
+    yield
+    tool_protocol_registry.reset()
 
 
 @pytest.mark.asyncio
-async def test_slide_edit_agent_uses_native_tool_calls_before_text_fallback():
-    service = SlideEditAgentService()
-    fake_ppt = _FakeNativeToolPPTService(
+async def test_agent_runs_native_tool_calls_and_returns_a_proposal():
+    service = _ScriptedPPTService(
         [
-            SimpleNamespace(
-                content="Inspecting.",
-                tool_calls=[
-                    {
-                        "id": "call-1",
-                        "type": "function",
-                        "function": {
-                            "name": "update_text",
-                            "arguments": json.dumps({"selector": "h1", "text": "Short Title"}),
-                        },
-                    }
-                ],
-            ),
-            SimpleNamespace(content="Shortened the title.", tool_calls=[]),
+            _response("looking", [_native_call("c1", "find_elements", {"selector": "h1"})]),
+            _response("", [_native_call("c2", "set_text", {"selector": "h1", "text": "Short"})]),
+            _response("Shortened the title."),
         ]
     )
 
-    proposal = await service.run_agent(_tool_request(), fake_ppt)
+    result, events = await _run(service, _request())
 
-    assert proposal.summary == "Shortened the title."
-    assert "Short Title" in proposal.html_content
-    first_role, _first_messages, first_kwargs = fake_ppt.calls[0]
-    assert first_role == "editor"
-    assert first_kwargs["tool_choice"] == "auto"
-    assert first_kwargs["parallel_tool_calls"] is False
-    assert first_kwargs["tools"][0]["type"] == "function"
-    assert first_kwargs["tools"][0]["function"]["parameters"]["type"] == "object"
-    second_messages = fake_ppt.calls[1][1]
-    assert second_messages[-1].role.value == "tool"
-    assert second_messages[-1].tool_call_id == "call-1"
+    assert result.status == "completed"
+    assert result.summary == "Shortened the title."
+    assert "<h1 class=\"title\" style=\"color:#111\">Short</h1>" in result.proposal.html_content
+    assert result.proposal.changed is True
+    assert result.proposal.validation.valid is True
+
+    assert service.calls[0]["tool_choice"] == "auto"
+    assert len(service.calls[0]["tools"]) == len(SlideEditToolbox.tool_names())
+    assert [event["type"] for event in events][:4] == [
+        "run_started",
+        "turn_started",
+        "thinking",
+        "tool_started",
+    ]
+    assert [event["seq"] for event in events] == list(range(1, len(events) + 1))
+    assert all(event["runId"] == result.run_id for event in events)
 
 
 @pytest.mark.asyncio
-async def test_slide_edit_agent_native_text_action_keeps_observation_in_history():
-    service = SlideEditAgentService()
-    fake_ppt = _FakeNativeToolPPTService(
+async def test_agent_emits_draft_updated_only_for_successful_mutations():
+    service = _ScriptedPPTService(
         [
-            SimpleNamespace(
-                content=json.dumps(
-                    {
-                        "thought": "Inspect before editing.",
-                        "action": "inspect_slide_html",
-                        "action_input": {},
-                    }
-                ),
-                tool_calls=[],
-            ),
-            SimpleNamespace(
-                content=json.dumps(
-                    {
-                        "thought": "Use the inspected title.",
-                        "action": "final",
-                        "action_input": {"summary": "Inspected the slide."},
-                    }
-                ),
-                tool_calls=[],
-            ),
+            _response("", [_native_call("c1", "read_slide", {})]),
+            _response("", [_native_call("c2", "set_text", {"selector": "ul", "text": "no"})]),
+            _response("", [_native_call("c3", "set_text", {"selector": "h1", "text": "Short"})]),
+            _response("done"),
         ]
     )
 
-    proposal = await service.run_agent(_tool_request(), fake_ppt)
+    _, events = await _run(service, _request())
 
-    assert proposal.summary == "Inspected the slide."
-    second_messages = fake_ppt.calls[1][1]
-    assert second_messages[-1].role.value == "user"
-    assert "Tool result:" in second_messages[-1].content
-    assert "Long Original Title" in second_messages[-1].content
+    drafts = [event for event in events if event["type"] == "draft_updated"]
+    assert len(drafts) == 1
+    assert drafts[0]["revision"] == 1
+    assert drafts[0]["changed"] is True
+    assert "Short" in drafts[0]["html"]
 
 
 @pytest.mark.asyncio
-async def test_slide_edit_agent_runs_tools_and_returns_proposal():
-    service = SlideEditAgentService()
-    fake_ppt = _FakePPTService(
+async def test_agent_downgrades_when_provider_ignores_native_tool_schemas():
+    service = _ScriptedPPTService(
         [
-            json.dumps(
-                {
-                    "thought": "Inspect before editing.",
-                    "action": "inspect_slide_html",
-                    "action_input": {"slide_index": 1},
-                }
-            ),
-            json.dumps(
-                {
-                    "thought": "Update the title text.",
-                    "action": "update_text",
-                    "action_input": {"selector": "h1", "text": "Short Title"},
-                }
-            ),
-            json.dumps(
-                {
-                    "thought": "The title is shorter and ready.",
-                    "action": "final",
-                    "action_input": {"summary": "Shortened the title."},
-                }
-            ),
+            _text_action("find_elements", {"selector": "h1"}),
+            _text_action("set_text", {"selector": "h1", "text": "Short"}),
+            _text_action("final", {"summary": "done via text protocol"}),
+        ],
+        provider="proxy",
+        model="mystery",
+    )
+
+    result, events = await _run(service, _request())
+
+    types = [event["type"] for event in events]
+    assert "protocol_changed" in types
+    assert result.status == "completed"
+    assert result.summary == "done via text protocol"
+    assert "Short" in result.proposal.html_content
+    # 后续请求直接从文本协议起步，不再浪费一轮。
+    key = ToolProtocolRegistry.key_for("proxy", "mystery")
+    assert tool_protocol_registry.preferred(key) is ToolProtocol.TEXT
+
+
+@pytest.mark.asyncio
+async def test_agent_downgrades_when_provider_rejects_the_tools_parameter():
+    service = _ScriptedPPTService(
+        [
+            RuntimeError("400 invalid_request_error: Unsupported parameter: 'tools'"),
+            _text_action("set_text", {"selector": "h1", "text": "Short"}),
+            _text_action("final", {"summary": "fallback worked"}),
+        ],
+        provider="weird",
+    )
+
+    result, events = await _run(service, _request())
+
+    assert result.status == "completed"
+    assert "Short" in result.proposal.html_content
+    assert any(event["type"] == "protocol_changed" for event in events)
+    assert "tools" not in service.calls[-1]
+
+
+@pytest.mark.asyncio
+async def test_agent_does_not_downgrade_on_unrelated_model_errors():
+    service = _ScriptedPPTService([RuntimeError("429 rate limit exceeded for tools tier")])
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    with pytest.raises(RuntimeError, match="rate limit"):
+        await SlideEditAgentService().run_agent(_request(), service, emit)
+
+    assert not any(event["type"] == "protocol_changed" for event in events)
+    error_events = [event for event in events if event["type"] == "error"]
+    assert error_events and error_events[0]["phase"] == "model"
+
+
+@pytest.mark.asyncio
+async def test_agent_retries_once_when_text_protocol_reply_is_unstructured():
+    tool_protocol_registry.mark_text_only(
+        ToolProtocolRegistry.key_for("proxy", "m"), "test"
+    )
+    service = _ScriptedPPTService(
+        [
+            _response("I will just chat instead of returning JSON."),
+            _text_action("set_text", {"selector": "h1", "text": "Short"}),
+            _text_action("final", {"summary": "recovered"}),
+        ],
+        provider="proxy",
+    )
+
+    result, _ = await _run(service, _request())
+
+    assert result.summary == "recovered"
+    assert "Short" in result.proposal.html_content
+
+
+@pytest.mark.asyncio
+async def test_agent_stops_at_the_next_checkpoint_when_cancelled():
+    service = _ScriptedPPTService(
+        [
+            _response("", [_native_call("c1", "set_text", {"selector": "h1", "text": "Half"})]),
+            _response("should never run"),
         ]
+    )
+    handle = agent_run_registry.register("run-cancel-test", 1)
+
+    result, events = await _run(service, _request(), handle=handle, cancel_on="draft_updated")
+    agent_run_registry.release("run-cancel-test")
+
+    assert result.status == "cancelled"
+    assert len(service.calls) == 1
+    # 停止前的改动仍然作为草稿返回，用户可以自行决定保留还是撤销。
+    assert "Half" in result.proposal.html_content
+    assert events[-1]["type"] == "run_finished"
+    assert events[-1]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_agent_finishes_with_max_iterations_status():
+    service = _ScriptedPPTService(
+        [_response("", [_native_call(f"c{i}", "read_slide", {})]) for i in range(5)]
+    )
+
+    result, _ = await _run(service, _request(maxIterations=3))
+
+    assert result.status == "max_iterations"
+    assert result.iterations_used == 3
+    assert len(service.calls) == 3
+    assert result.proposal.changed is False
+
+
+@pytest.mark.asyncio
+async def test_agent_reports_unsupported_tool_and_keeps_going():
+    service = _ScriptedPPTService(
+        [
+            _response("", [_native_call("c1", "teleport", {})]),
+            _response("recovered"),
+        ]
+    )
+
+    result, events = await _run(service, _request())
+
+    failed = [
+        event for event in events if event["type"] == "tool_finished" and event["ok"] is False
+    ]
+    assert failed and "unsupported tool" in failed[0]["summary"]
+    assert result.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_agent_emits_error_event_when_a_tool_raises(monkeypatch):
+    def boom(self, tool_name, tool_input):
+        raise RuntimeError("tool exploded")
+
+    monkeypatch.setattr(SlideEditToolbox, "execute", boom)
+    service = _ScriptedPPTService(
+        [_response("", [_native_call("c1", "read_slide", {})])]
     )
     events = []
 
-    async def capture(event):
+    async def emit(event):
         events.append(event)
 
-    proposal = await service.run_agent(_tool_request(), fake_ppt, capture)
-
-    assert proposal.summary == "Shortened the title."
-    assert "Short Title" in proposal.html_content
-    assert proposal.validation.valid is True
-    assert [event["type"] for event in events if event["type"] == "tool_call"] == [
-        "tool_call",
-        "tool_call",
-    ]
-    assert {event["type"] for event in events} >= {
-        "agent_start",
-        "agent_step",
-        "tool_result",
-        "draft_ready",
-        "needs_confirmation",
-    }
-
-
-@pytest.mark.asyncio
-async def test_slide_edit_agent_retries_initial_unstructured_text_response():
-    service = SlideEditAgentService()
-    fake_ppt = _NoNativeToolPPTService(
-        [
-            "I will make the title shorter.",
-            json.dumps(
-                {
-                    "thought": "Use a structured tool call.",
-                    "action": "update_text",
-                    "action_input": {"selector": "h1", "text": "Short Title"},
-                }
-            ),
-            json.dumps(
-                {
-                    "thought": "The title is shorter.",
-                    "action": "final",
-                    "action_input": {"summary": "Shortened the title."},
-                }
-            ),
-        ]
-    )
-
-    proposal = await service.run_agent(_tool_request(maxIterations=3), fake_ppt)
-
-    assert proposal.summary == "Shortened the title."
-    assert "Short Title" in proposal.html_content
-    second_prompt = fake_ppt.calls[1][1][-1].content
-    second_context = json.loads(second_prompt.split("\n\n", 1)[1])
-    assert "Response was not a valid JSON action" in second_context["scratchpad"][0]["error"]
-
-
-@pytest.mark.asyncio
-async def test_slide_edit_agent_allows_unstructured_final_after_tool_execution():
-    service = SlideEditAgentService()
-    fake_ppt = _NoNativeToolPPTService(
-        [
-            json.dumps(
-                {
-                    "thought": "Update the title text.",
-                    "action": "update_text",
-                    "action_input": {"selector": "h1", "text": "Short Title"},
-                }
-            ),
-            "Shortened the title.",
-        ]
-    )
-
-    proposal = await service.run_agent(_tool_request(maxIterations=3), fake_ppt)
-
-    assert proposal.summary == "Shortened the title."
-    assert "Short Title" in proposal.html_content
-
-
-@pytest.mark.asyncio
-async def test_slide_edit_agent_reports_unsupported_tool_and_continues():
-    service = SlideEditAgentService()
-    fake_ppt = _FakePPTService(
-        [
-            json.dumps(
-                {
-                    "thought": "Try an unknown tool.",
-                    "action": "bad_tool",
-                    "action_input": {},
-                }
-            ),
-            json.dumps(
-                {
-                    "thought": "Finish without change.",
-                    "action": "final",
-                    "action_input": {"summary": "No safe change."},
-                }
-            ),
-        ]
-    )
-
-    proposal = await service.run_agent(_tool_request(maxIterations=3), fake_ppt)
-
-    assert proposal.summary == "No safe change."
-    assert proposal.tool_transcript == []
-
-
-@pytest.mark.asyncio
-async def test_slide_edit_agent_finalizes_when_max_iterations_is_reached():
-    service = SlideEditAgentService()
-    fake_ppt = _FakePPTService(
-        [
-            json.dumps(
-                {
-                    "thought": "Inspect.",
-                    "action": "inspect_slide_html",
-                    "action_input": {},
-                }
-            ),
-            json.dumps(
-                {
-                    "thought": "Inspect again.",
-                    "action": "inspect_slide_html",
-                    "action_input": {},
-                }
-            ),
-        ]
-    )
-
-    proposal = await service.run_agent(_tool_request(maxIterations=2), fake_ppt)
-
-    assert (
-        proposal.summary
-        == "Reached the maximum edit iterations and prepared the current draft."
-    )
-    assert proposal.validation.valid is True
-
-
-@pytest.mark.asyncio
-async def test_slide_edit_agent_emits_error_event_when_model_fails():
-    service = SlideEditAgentService()
-    events = []
-
-    async def capture(event):
-        events.append(event)
-
-    with pytest.raises(RuntimeError, match="model unavailable"):
-        await service.run_agent(_tool_request(), _FailingPPTService(), capture)
+    with pytest.raises(RuntimeError, match="tool exploded"):
+        await SlideEditAgentService().run_agent(_request(), service, emit)
 
     error_events = [event for event in events if event["type"] == "error"]
     assert error_events == [
         {
             "type": "error",
-            "phase": "model",
-            "message": "model unavailable",
-            "errorType": "RuntimeError",
-            "iteration": 1,
-        }
-    ]
-
-
-@pytest.mark.asyncio
-async def test_slide_edit_agent_emits_error_event_when_tool_raises(monkeypatch):
-    service = SlideEditAgentService()
-    fake_ppt = _FakePPTService(
-        [
-            json.dumps(
-                {
-                    "thought": "Try to inspect.",
-                    "action": "inspect_slide_html",
-                    "action_input": {},
-                }
-            )
-        ]
-    )
-    events = []
-
-    async def capture(event):
-        events.append(event)
-
-    async def fail_tool(self, tool_name, tool_input):
-        raise ValueError("tool exploded")
-
-    monkeypatch.setattr(SlideEditToolRunner, "execute_tool", fail_tool)
-
-    with pytest.raises(ValueError, match="tool exploded"):
-        await service.run_agent(_tool_request(), fake_ppt, capture)
-
-    error_events = [event for event in events if event["type"] == "error"]
-    assert error_events == [
-        {
-            "type": "error",
+            "runId": error_events[0]["runId"],
+            "seq": error_events[0]["seq"],
             "phase": "tool",
             "message": "tool exploded",
-            "errorType": "ValueError",
+            "errorType": "RuntimeError",
             "iteration": 1,
-            "tool": "inspect_slide_html",
+            "tool": "read_slide",
         }
     ]
 
 
 @pytest.mark.asyncio
-async def test_slide_edit_agent_vision_mode_sends_multimodal_context():
-    service = SlideEditAgentService()
-    screenshot = "data:image/png;base64,slide-shot"
-    reference_url = "https://example.test/reference.png"
-    fake_ppt = _FakePPTService(
+async def test_agent_sends_multimodal_content_in_vision_mode():
+    service = _ScriptedPPTService([_response("looked at it")])
+
+    await _run(
+        service,
+        _request(
+            visionEnabled=True,
+            slideScreenshot="data:image/png;base64,AAAA",
+            images=[{"url": "https://example.com/ref.png", "name": "ref"}],
+        ),
+    )
+
+    assert service.calls[0]["role"] == "vision_analysis"
+    user_message = service.calls[0]["messages"][1]
+    assert user_message.role is MessageRole.USER
+    assert isinstance(user_message.content[0], TextContent)
+    image_urls = [
+        part.image_url["url"] for part in user_message.content if isinstance(part, ImageContent)
+    ]
+    assert image_urls == ["data:image/png;base64,AAAA", "https://example.com/ref.png"]
+
+
+@pytest.mark.asyncio
+async def test_agent_uses_editor_role_without_vision_inputs():
+    service = _ScriptedPPTService([_response("done")])
+
+    await _run(service, _request(visionEnabled=True))
+
+    assert service.calls[0]["role"] == "editor"
+
+
+@pytest.mark.asyncio
+async def test_tool_results_are_fed_back_as_tool_role_messages():
+    service = _ScriptedPPTService(
         [
-            json.dumps(
-                {
-                    "thought": "Vision context is enough.",
-                    "action": "final",
-                    "action_input": {"summary": "Checked visual context."},
-                }
-            )
+            _response("", [_native_call("c1", "read_slide", {})]),
+            _response("done"),
         ]
     )
 
-    proposal = await service.run_agent(
-        _tool_request(
-            visionEnabled=True,
-            slideScreenshot=screenshot,
-            images=[{"name": "Reference", "size": "120KB", "url": reference_url}],
-        ),
-        fake_ppt,
-    )
+    await _run(service, _request())
 
-    assert proposal.summary == "Checked visual context."
-    role, messages, _kwargs = fake_ppt.calls[0]
-    assert role == "vision_analysis"
-    user_content = messages[-1].content
-    assert isinstance(user_content, list)
-    assert isinstance(user_content[0], TextContent)
-    assert '"vision"' in user_content[0].text
-    assert "slide_screenshot" in user_content[0].text
-    assert "Reference" in user_content[0].text
-    assert screenshot not in user_content[0].text
-    image_parts = [part for part in user_content if isinstance(part, ImageContent)]
-    assert [part.image_url["url"] for part in image_parts] == [
-        screenshot,
-        reference_url,
+    roles = [message.role for message in service.calls[-1]["messages"]]
+    assert roles == [
+        MessageRole.SYSTEM,
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+        MessageRole.TOOL,
     ]
-
-
-def test_slide_edit_agent_tool_schemas_match_runner_tool_names():
-    service = SlideEditAgentService()
-    runner = SlideEditToolRunner(_tool_context())
-
-    schema_names = [schema["name"] for schema in service._tool_schemas(runner)]
-
-    assert schema_names == runner.available_tool_names()
+    tool_message = service.calls[-1]["messages"][-1]
+    assert tool_message.tool_call_id == "c1"
+    assert json.loads(tool_message.content)["tool"] == "read_slide"
