@@ -44,8 +44,65 @@
     background: #fafafa;
 }
 
+/* 字段分区：主题行 + 分隔线 + 需求区，标签常驻，输入后依然可辨 */
+.composer-field--topic {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 24px 14px;
+    border-bottom: 1px solid #eef1f5;
+}
+
+.composer-field--body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px 24px 4px;
+}
+
+.composer-field-label {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    align-self: flex-start;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1.5;
+    color: #64748b;
+    background: #f1f5f9;
+    border-radius: 7px;
+    padding: 3px 9px;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+.composer-field--topic .composer-field-label {
+    align-self: center;
+}
+
+.composer-field:focus-within .composer-field-label {
+    color: #0f172a;
+    background: #e8edf4;
+}
+
+.composer-field-required {
+    color: #ef4444;
+    margin-left: 2px;
+}
+
+.composer-field-optional {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #94a3b8;
+    margin-left: 5px;
+}
+
 .composer-topic {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     border: none;
     outline: none;
     background: transparent;
@@ -54,7 +111,7 @@
     font-weight: 700;
     letter-spacing: -0.01em;
     color: var(--text-primary);
-    padding: 22px 24px 10px;
+    padding: 0;
 }
 
 .composer-topic::placeholder {
@@ -72,8 +129,8 @@
     font-size: 0.95rem;
     line-height: 1.7;
     color: var(--text-primary);
-    padding: 0 24px 12px;
-    min-height: 160px;
+    padding: 0 0 8px;
+    min-height: 150px;
     max-height: 420px;
     overflow-y: auto;
 }
@@ -586,13 +643,19 @@
         font-size: 1.45rem;
     }
 
+    .composer-field--topic {
+        padding: 12px 18px 11px;
+    }
+
+    .composer-field--body {
+        padding: 12px 18px 2px;
+    }
+
     .composer-topic {
         font-size: 1.05rem;
-        padding: 18px 18px 8px;
     }
 
     .composer-body {
-        padding: 0 18px 12px;
         min-height: 140px;
     }
 
@@ -634,9 +697,17 @@
     </div>
 
     <form id="create-form" class="composer" autocomplete="off" novalidate>
-        <input type="text" id="topic" class="composer-topic" placeholder="PPT 主题，例如：人工智能技术发展趋势" aria-label="PPT 主题" required>
-        <textarea id="requirements" class="composer-body" aria-label="具体需求描述"
-            placeholder="描述你的具体需求：重点内容、章节思路、数据素材、风格偏好…&#10;也可以直接把参考资料拖进来，或用下方按钮添加附件与链接。"></textarea>
+        <div class="composer-field composer-field--topic">
+            <label for="topic" class="composer-field-label">主题<span class="composer-field-required"
+                    aria-hidden="true">*</span></label>
+            <input type="text" id="topic" class="composer-topic" placeholder="例如：人工智能技术发展趋势" required>
+        </div>
+        <div class="composer-field composer-field--body">
+            <label for="requirements" class="composer-field-label">需求<span
+                    class="composer-field-optional">选填</span></label>
+            <textarea id="requirements" class="composer-body"
+                placeholder="描述你的具体需求：重点内容、章节思路、数据素材、风格偏好…&#10;也可以直接把参考资料拖进来，或用下方按钮添加附件与链接。"></textarea>
+        </div>
 
         <div id="tray" class="composer-tray" hidden></div>
 
