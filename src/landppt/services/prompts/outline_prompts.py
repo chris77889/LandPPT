@@ -265,9 +265,14 @@ Use chart_config only when a chart is needed (include type, data, options); set 
         topic: str, target_audience: str, ppt_style: str,
         page_count_instruction: str, research_section: str,
         include_transition_pages: bool = False,
+        language: str = "zh",
     ) -> str:
         time_ctx = OutlinePrompts._build_current_time_context_zh()
         transition_inst = OutlinePrompts._build_transition_page_instruction_zh(include_transition_pages)
+        # The prompt scaffolding stays Chinese, but the OUTPUT language must follow
+        # the project: an English project used to get a Chinese outline because this
+        # function had no language parameter at all.
+        language_instruction = OutlinePrompts._build_streaming_language_instruction(language)
 
         return f"""作为专业的PPT大纲生成助手，请为以下项目生成详细的PPT大纲。
 
@@ -310,7 +315,33 @@ slide_type 可选值：title / content / agenda / transition / conclusion / than
 5. {transition_inst}
 6. 页面标题简洁明确，内容要点具体实用
 7. 每页只承担一个核心任务；标题串联多个独立主题时优先拆页，不要一页多主题
-8. 时间语义以上述当前时间为准；若输入信息已给出明确时间，以输入信息为准"""
+8. 时间语义以上述当前时间为准；若输入信息已给出明确时间，以输入信息为准
+9. {language_instruction}"""
+
+    _LANGUAGE_DISPLAY_NAMES = {
+        "zh": "中文（简体）",
+        "zh-cn": "中文（简体）",
+        "zh-tw": "中文（繁體）",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어",
+        "fr": "Français",
+        "de": "Deutsch",
+        "es": "Español",
+        "ru": "Русский",
+        "pt": "Português",
+    }
+
+    @classmethod
+    def _build_streaming_language_instruction(cls, language: str) -> str:
+        code = (language or "zh").strip().lower()
+        display = cls._LANGUAGE_DISPLAY_NAMES.get(code)
+        if display is None:
+            display = language.strip() if language and language.strip() else "中文（简体）"
+        return (
+            f"所有输出内容（title、页面标题、content_points）必须使用 {display} 撰写，"
+            f"JSON 的字段名保持英文不变"
+        )
 
     # ----------------------------------------------------------------
     # 大纲生成上下文（供其他模块使用）

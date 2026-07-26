@@ -3,6 +3,7 @@ PPT修复和验证相关提示词
 包含所有用于修复和验证PPT数据的提示词模板
 """
 
+import json
 from typing import Dict, Any, List
 
 
@@ -19,16 +20,24 @@ class RepairPrompts:
 
         page_count_instruction = ""
         if page_count_mode == 'custom_range':
-            min_pages = page_count_settings.get('min_pages', 8)
-            max_pages = page_count_settings.get('max_pages', 15)
+            # `or` rather than a get() default: the key is often present but None.
+            min_pages = page_count_settings.get('min_pages') or 8
+            max_pages = page_count_settings.get('max_pages') or 15
             page_count_instruction = f"- 页数要求：必须严格生成{min_pages}-{max_pages}页的PPT"
         elif page_count_mode == 'fixed':
-            fixed_pages = page_count_settings.get('fixed_pages', 10)
+            fixed_pages = page_count_settings.get('fixed_pages') or 10
             page_count_instruction = f"- 页数要求：必须生成恰好{fixed_pages}页的PPT"
         else:
             page_count_instruction = "- 页数要求：保持现有页数和内容，仅修复错误"
 
         errors_text = '\n'.join(["- " + str(error) for error in validation_errors])
+        # Serialise as real JSON. Interpolating the dict directly produced a Python
+        # repr (single quotes, True/False/None) inside a block labelled "json",
+        # which taught the repair model to answer in the same non-JSON style.
+        try:
+            outline_json = json.dumps(outline_data, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            outline_json = json.dumps(str(outline_data), ensure_ascii=False)
         transition_instruction = (
             "- 已开启章节过渡页：允许并保留 slide_type=\"transition\"，过渡页计入总页数。"
             if confirmed_requirements.get("include_transition_pages")
@@ -50,7 +59,7 @@ class RepairPrompts:
 
 原始JSON数据：
 ```json
-{outline_data}
+{outline_json}
 ```
 
 修复要求：

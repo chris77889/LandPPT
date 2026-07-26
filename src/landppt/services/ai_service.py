@@ -244,7 +244,7 @@ Provide a helpful response, and if relevant, suggest how this topic could be tur
     async def _generate_fallback_ppt_response(self, prompt: str) -> str:
         """Generate fallback PPT response when AI fails"""
         ppt_info = self._extract_ppt_info(prompt)
-        return await self._generate_guidance_response(ppt_info)
+        return await self._generate_outline_response(ppt_info)
 
     def _generate_fallback_general_response(self, prompt: str) -> str:
         """Generate fallback general response when AI fails"""

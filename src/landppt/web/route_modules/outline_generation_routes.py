@@ -132,36 +132,49 @@ async def stream_outline_generation(
                     )
 
                 async for chunk in chunk_source:
-                    yield chunk
-                    if billed or not _is_billable_provider(outline_provider_name):
-                        continue
-                    for line in str(chunk).splitlines():
-                        if not line.startswith("data: "):
-                            continue
-                        try:
-                            import json
-                            payload = json.loads(line[6:])
-                        except Exception:
-                            continue
-                        if payload.get("done") is True:
-                            billed = True
-                            llm_call_count = payload.get("llm_call_count", 1)
+                    # Bill BEFORE yielding the completion event. Billing afterwards
+                    # meant a client that disconnected right after receiving `done`
+                    # closed the generator before the charge was applied.
+                    if not billed and _is_billable_provider(outline_provider_name):
+                        for line in str(chunk).splitlines():
+                            if not line.startswith("data: "):
+                                continue
                             try:
-                                llm_call_count = max(0, int(llm_call_count))
+                                import json
+                                payload = json.loads(line[6:])
                             except Exception:
-                                llm_call_count = 1
+                                continue
+                            if payload.get("done") is True:
+                                billed = True
+                                llm_call_count = payload.get("llm_call_count", 1)
+                                try:
+                                    llm_call_count = max(0, int(llm_call_count))
+                                except Exception:
+                                    llm_call_count = 1
 
-                            if llm_call_count > 0:
-                                await consume_credits_for_operation(
-                                    user.id,
-                                    "outline_generation",
-                                    llm_call_count,
-                                    description=f"大纲生成(流式): {project.topic}",
-                                    reference_id=project_id,
-                                    provider_name=outline_provider_name,
-                                )
+                                if llm_call_count > 0:
+                                    await consume_credits_for_operation(
+                                        user.id,
+                                        "outline_generation",
+                                        llm_call_count,
+                                        description=f"大纲生成(流式): {project.topic}",
+                                        reference_id=project_id,
+                                        provider_name=outline_provider_name,
+                                    )
+                    yield chunk
             except Exception as e:
                 import json
+                # Record the failure: leaving the stage "running" made the todo board
+                # spin forever with no error and no retry affordance.
+                try:
+                    await user_ppt_service.project_manager.update_stage_status(
+                        project_id, "outline_generation", "failed", None, user_id=user.id
+                    )
+                except Exception as stage_error:
+                    logger.warning(
+                        "Could not mark outline_generation failed for %s: %s",
+                        project_id, stage_error
+                    )
                 error_response = {'error': str(e)}
                 yield f"data: {json.dumps(error_response)}\n\n"
 
@@ -257,13 +270,17 @@ async def generate_outline(
         # Update outline generation stage
         await user_ppt_service._update_outline_generation_stage(project_id, outline_dict)
 
-        # Consume credits for outline generation
-        await consume_credits_for_operation(
-            user.id, "outline_generation", 1,
-            description=f"大纲生成: {project.topic}",
-            reference_id=project_id,
-            provider_name=outline_provider_name,
-        )
+        # Bill by actual LLM call count, matching the streaming route. A flat 1 here
+        # meant the same file-based outline cost 4 credits via SSE but 1 via this
+        # endpoint.
+        outline_llm_call_count = _resolve_outline_llm_call_count(outline, default=1)
+        if outline_llm_call_count > 0:
+            await consume_credits_for_operation(
+                user.id, "outline_generation", outline_llm_call_count,
+                description=f"大纲生成: {project.topic}",
+                reference_id=project_id,
+                provider_name=outline_provider_name,
+            )
 
         return {
             "status": "success",
@@ -380,127 +397,6 @@ async def regenerate_outline(
                 "message": "Outline regeneration scheduled"
             }
 
-            # Check if file path exists
-            file_path = confirmed_requirements.get('file_path')
-            filename_for_request = confirmed_requirements.get('filename', 'uploaded_file')
-
-            # When user selects magic_pdf (MinerU), prefer using the original uploaded PDF(s) instead of a pre-merged .md.
-            # Otherwise, summeryanyfile only reads Markdown and will never call MinerU.
-            from ...services.file_outline_utils import prefer_uploaded_files_for_magic_pdf, get_file_processing_mode
-
-            file_processing_mode = get_file_processing_mode(confirmed_requirements)
-            should_prefer_uploads, uploaded_files = prefer_uploaded_files_for_magic_pdf(confirmed_requirements)
-            if should_prefer_uploads:
-                try:
-                    import os
-                    import tempfile
-
-                    from ...services.file_processor import FileProcessor
-
-                    file_entries = [{"file_path": item["file_path"], "filename": item.get("filename")} for item in uploaded_files]
-                    file_paths = [item["file_path"] for item in file_entries]
-
-                    if len(file_paths) == 1:
-                        file_path = file_paths[0]
-                        filename_for_request = file_entries[0].get("filename") or filename_for_request
-                    elif len(file_paths) > 1:
-                        fp = FileProcessor()
-                        merged_parts = []
-                        for entry in file_entries:
-                            src_path = entry.get("file_path")
-                            src_name = entry.get("filename") or os.path.basename(src_path or "")
-                            if not src_path:
-                                continue
-                            processed = await fp.process_file(
-                                src_path,
-                                src_name,
-                                file_processing_mode=file_processing_mode,
-                            )
-                            merged_parts.append({"filename": src_name, "content": processed.processed_content})
-
-                        if merged_parts:
-                            merged_content = fp.merge_multiple_files_to_markdown(merged_parts)
-                            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.md', encoding='utf-8') as merged_file:
-                                merged_file.write(merged_content)
-                                file_path = merged_file.name
-                            filename_for_request = f"merged_content_{len(merged_parts)}_files.md"
-                except Exception as e:
-                    logger.warning(f"Failed to rebuild merged file for magic_pdf; falling back to stored file_path: {e}")
-            if not file_path:
-                return {
-                    "status": "error",
-                    "error": "文件路径信息丢失，请重新上传文件并确认需求"
-                }
-
-            # Use file-based outline generation
-            file_request = FileOutlineGenerationRequest(
-                file_path=file_path,
-                filename=filename_for_request,
-                topic=project_request.topic,
-                scenario=project_request.scenario,
-                requirements=confirmed_requirements.get('requirements', ''),
-                target_audience=confirmed_requirements.get('target_audience', '普通大众'),
-                custom_audience=confirmed_requirements.get('custom_audience'),
-                description=confirmed_requirements.get('description'),
-                language=language,
-                page_count_mode=page_count_settings.get('mode', 'ai_decide'),
-                min_pages=page_count_settings.get('min_pages', 5),
-                max_pages=page_count_settings.get('max_pages', 20),
-                fixed_pages=page_count_settings.get('fixed_pages', 10),
-                ppt_style=confirmed_requirements.get('ppt_style', 'general'),
-                custom_style_prompt=confirmed_requirements.get('custom_style_prompt'),
-                include_transition_pages=bool(confirmed_requirements.get('include_transition_pages', False)),
-                file_processing_mode=file_processing_mode,
-                content_analysis_depth=confirmed_requirements.get('content_analysis_depth', 'standard')
-            )
-
-            user_ppt_service = get_ppt_service_for_user(user.id)
-
-            result = await user_ppt_service.generate_outline_from_file(file_request)
-
-            if not result.success:
-                return {
-                    "status": "error",
-                    "error": result.error or "文件大纲生成失败"
-                }
-
-            # Format outline as JSON string
-            import json
-            outline_content = json.dumps(result.outline, ensure_ascii=False, indent=2)
-
-            llm_call_count = _resolve_outline_llm_call_count(result, default=1)
-            if llm_call_count > 0:
-                has_credits_exact, required_exact, balance_exact = await check_credits_for_operation(
-                    user.id, "outline_generation", llm_call_count, provider_name=outline_provider_name
-                )
-                if not has_credits_exact:
-                    return {
-                        "status": "error",
-                        "error": f"积分不足，大纲生成需要 {required_exact} 积分，当前余额 {balance_exact} 积分"
-                    }
-
-                billed, bill_message = await consume_credits_for_operation(
-                    user.id,
-                    "outline_generation",
-                    llm_call_count,
-                    description=f"大纲重新生成(文件): {project.topic}",
-                    reference_id=project_id,
-                    provider_name=outline_provider_name,
-                )
-                if not billed:
-                    return {
-                        "status": "error",
-                        "error": bill_message or "积分扣费失败"
-                    }
-
-            # Update outline generation stage
-            await user_ppt_service._update_outline_generation_stage(project_id, result.outline)
-
-            return {
-                "status": "success",
-                "outline_content": outline_content,
-                "message": "File-based outline regenerated successfully"
-            }
         else:
             from ...services.db_project_manager import DatabaseProjectManager
 

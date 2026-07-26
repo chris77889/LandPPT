@@ -21,6 +21,13 @@ class SlideHtmlCleanupService:
 
     def _clean_html_response(self, raw_content: str) -> str:
         """Clean and extract HTML content from AI responses."""
+        # Imported here, absolutely, so this method still resolves its helpers when
+        # loaded standalone from source (see the modularization tests).
+        from landppt.services.slide.html_extraction import (
+            looks_like_markup,
+            pick_best_document,
+        )
+
         raw_content = self._strip_think_tags(raw_content)
 
         if not raw_content:
@@ -37,17 +44,23 @@ class SlideHtmlCleanupService:
             error_indicator in content_lower for error_indicator in ["error", "sorry", "cannot", "unable"]
         )
 
-        html_match = re.search(r"```html\s*\n(.*?)\n```", content, re.DOTALL | re.IGNORECASE)
-        if html_match:
-            logger.debug("Found HTML in markdown code block")
-            return html_match.group(1).strip()
+        candidates = [
+            match.group(1)
+            for match in re.finditer(r"```(?:html|HTML)?[ \t]*\r?\n(.*?)```", content, re.DOTALL)
+        ]
+        candidates += [
+            match.group(0)
+            for match in re.finditer(r"<!DOCTYPE html.*?</html>", content, re.DOTALL | re.IGNORECASE)
+        ]
+        candidates += [
+            match.group(0)
+            for match in re.finditer(r"<html.*?</html>", content, re.DOTALL | re.IGNORECASE)
+        ]
 
-        generic_match = re.search(r"```\s*\n(.*?)\n```", content, re.DOTALL)
-        if generic_match:
-            potential_html = generic_match.group(1).strip()
-            if potential_html.lower().startswith("<!doctype html") or potential_html.lower().startswith("<html"):
-                logger.debug("Found HTML in generic code block")
-                return potential_html
+        best = pick_best_document(candidates)
+        if best:
+            logger.debug("Extracted HTML from %s candidate block(s)", len(candidates))
+            return best
 
         prefixes_to_remove = [
             "这是生成的HTML代码：",
@@ -66,40 +79,34 @@ class SlideHtmlCleanupService:
         if content.endswith("```"):
             content = content[:-3].strip()
 
-        doctype_match = re.search(r"<!DOCTYPE html.*?</html>", content, re.DOTALL | re.IGNORECASE)
-        if doctype_match:
-            logger.debug("Found HTML using DOCTYPE pattern")
-            return doctype_match.group(0)
-
-        html_tag_match = re.search(r"<html.*?</html>", content, re.DOTALL | re.IGNORECASE)
-        if html_tag_match:
-            logger.debug("Found HTML using html tag pattern")
-            return html_tag_match.group(0)
-
+        # Assemble a document that never closed. Commentary lines are skipped only
+        # BEFORE it starts: applying that filter inside the document deleted CSS
+        # "#id {" selector lines and blank lines, corrupting the stylesheet.
         html_lines = []
         in_html = False
         for line in content.split("\n"):
             line_stripped = line.strip()
             line_lower = line_stripped.lower()
 
-            if not line_stripped or line_stripped.startswith("#") or line_stripped.startswith("//"):
+            if not in_html:
+                if not line_stripped or line_stripped.startswith(("#", "//")):
+                    continue
+                if line_lower.startswith("<!doctype") or line_lower.startswith("<html"):
+                    in_html = True
+                    html_lines.append(line)
                 continue
 
-            if line_lower.startswith("<!doctype") or line_lower.startswith("<html"):
-                in_html = True
-                html_lines.append(line)
-                continue
-
-            if in_html:
-                html_lines.append(line)
-                if line_lower.endswith("</html>"):
-                    break
+            html_lines.append(line)
+            if line_lower.endswith("</html>"):
+                break
 
         if html_lines:
             logger.debug("Found HTML using line-by-line extraction")
             return "\n".join(html_lines)
 
-        if "<" in content and ">" in content:
+        # Last resort. Previously ANY content containing '<' and '>' was accepted,
+        # so AI refusals shipped as slides.
+        if looks_like_markup(content):
             logger.warning("Could not extract HTML using strict patterns, returning cleaned content")
             return content
 

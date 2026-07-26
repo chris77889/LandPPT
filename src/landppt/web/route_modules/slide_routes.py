@@ -255,6 +255,24 @@ async def _do_batch_regenerate(
         if invalid_indices:
             raise HTTPException(status_code=400, detail=f"Invalid slide indices: {invalid_indices}")
 
+        # Honour per-slide locks: a locked slide must survive batch regeneration,
+        # and must not be billed for either.
+        locked_indices = await user_ppt_service.get_locked_slide_indices(project_id)
+        skipped_locked = sorted(i for i in target_indices if i in locked_indices)
+        if skipped_locked:
+            target_indices = [i for i in target_indices if i not in locked_indices]
+            logger.info(
+                f"Skipping locked slides {skipped_locked} for project {project_id}"
+            )
+        if not target_indices:
+            return {
+                "success": True,
+                "regenerated": 0,
+                "skipped_locked": skipped_locked,
+                "results": [],
+                "message": "所有目标幻灯片均已锁定，未做任何修改",
+            }
+
         # Check credits before any AI calls (only billable for LandPPT provider).
         _, slide_role_settings = await user_ppt_service.get_role_provider_async("slide_generation")
         slide_provider_name = slide_role_settings.get("provider")
@@ -354,9 +372,12 @@ async def _do_batch_regenerate(
         project.slides_html = user_ppt_service._combine_slides_to_full_html(project.slides_data, outline_title)
         project.updated_at = time.time()
 
-        updated_count = len([r for r in results if r.get("success")])
-
-        # Persist: save regenerated slides and update project HTML.
+        # Persist: save regenerated slides and update project HTML. Only pages that
+        # were actually written are billable — the previous code billed every
+        # generated page even when this whole block raised, so a transient DB
+        # failure charged the user for slides the project never received.
+        persisted_count = 0
+        persist_error = None
         try:
             from ...services.db_project_manager import DatabaseProjectManager
             db_manager = DatabaseProjectManager()
@@ -364,14 +385,24 @@ async def _do_batch_regenerate(
             for r in results:
                 if not r.get("success") or not r.get("slide_data"):
                     continue
-                await db_manager.save_single_slide(project_id, int(r["slide_index"]), r["slide_data"])
+                saved = await db_manager.save_single_slide(
+                    project_id, int(r["slide_index"]), r["slide_data"]
+                )
+                if saved:
+                    persisted_count += 1
+                else:
+                    r["success"] = False
+                    r["error"] = "数据库保存失败"
 
             await db_manager.update_project_data(project_id, {
                 "slides_html": project.slides_html,
                 "updated_at": project.updated_at
             })
         except Exception as save_error:
+            persist_error = str(save_error)
             logger.error(f"Batch regenerate DB save failed for project {project_id}: {save_error}")
+
+        updated_count = persisted_count
 
         if updated_count > 0:
             await consume_credits_for_operation(
@@ -383,12 +414,17 @@ async def _do_batch_regenerate(
                 provider_name=slide_provider_name,
             )
 
-        return {
+        response = {
             "success": updated_count > 0,
             "updated_count": updated_count,
             "total_requested": len(target_indices),
             "results": results
         }
+        if skipped_locked:
+            response["skipped_locked"] = skipped_locked
+        if persist_error:
+            response["error"] = f"部分幻灯片保存失败：{persist_error}"
+        return response
 
     except HTTPException:
         raise
@@ -403,6 +439,26 @@ async def batch_regenerate_slides(
     user: User = Depends(get_current_user_required),
 ):
     """Regenerate multiple slides (or all slides) in one request."""
+    # Same concurrency guard as the /async variant. Without it a double-click (or
+    # this route racing an in-flight async run) had two loops writing the same
+    # slide indices, and both runs were billed.
+    from ...services.background_tasks import get_task_manager
+
+    existing_task = await get_task_manager().find_active_task_async(
+        task_type="slides_batch_regeneration",
+        metadata_filter={"project_id": project_id, "user_id": user.id},
+    )
+    if existing_task:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "already_processing",
+                "task_id": existing_task.task_id,
+                "message": "当前项目已有批量重新生成任务正在执行",
+                "polling_endpoint": f"/api/landppt/tasks/{existing_task.task_id}",
+            },
+        )
+
     return await _do_batch_regenerate(project_id, payload, user)
 
 
@@ -687,8 +743,13 @@ async def cancel_slides_generation(
     """Request slide generation cancellation (best-effort)."""
     try:
         user_ppt_service = get_ppt_service_for_user(user.id)
+        project = await user_ppt_service.project_manager.get_project(project_id, user_id=user.id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
         await user_ppt_service.request_cancel_slides_generation(project_id)
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -701,8 +762,13 @@ async def clear_slides_cancel_flag(
     """Clear the cancellation flag so a paused generation can resume."""
     try:
         user_ppt_service = get_ppt_service_for_user(user.id)
+        project = await user_ppt_service.project_manager.get_project(project_id, user_id=user.id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
         await user_ppt_service.clear_cancel_slides_generation(project_id)
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"success": False, "error": str(e)}
 

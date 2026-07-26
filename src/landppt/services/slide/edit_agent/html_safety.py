@@ -241,9 +241,46 @@ def css_declaration_error(prop: str, value: str) -> Optional[str]:
     return None
 
 
+def _split_style_declarations(style: str) -> List[str]:
+    """Split on top-level ';' only.
+
+    A plain ``style.split(";")`` cut inline ``url(data:image/svg+xml;base64,...)``
+    values in half, so merging any unrelated property re-serialised the element
+    with a broken background.
+    """
+    items: List[str] = []
+    current: List[str] = []
+    depth = 0
+    quote: Optional[str] = None
+
+    for char in style or "":
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+            current.append(char)
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif char == ";" and depth == 0:
+            items.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+
+    if current:
+        items.append("".join(current))
+    return items
+
+
 def parse_style_declarations(style: str) -> Dict[str, str]:
     declarations: Dict[str, str] = {}
-    for item in (style or "").split(";"):
+    for item in _split_style_declarations(style):
         if ":" not in item:
             continue
         prop, value = item.split(":", 1)

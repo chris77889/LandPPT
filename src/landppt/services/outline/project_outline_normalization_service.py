@@ -70,16 +70,47 @@ class ProjectOutlineNormalizationService:
         return text
 
     @classmethod
-    def _extract_first_balanced_json_block(cls, content: str) -> Optional[str]:
-        """提取首个括号平衡的 JSON 对象或数组。"""
+    def _extract_balanced_json_blocks(cls, content: str) -> List[str]:
+        """收集文本中所有括号平衡的 JSON 对象/数组（跳过嵌套在内部的）。"""
         text = (content or "").strip()
-        for start_index, char in enumerate(text):
-            if char not in "{[":
+        blocks: List[str] = []
+        index = 0
+        while index < len(text):
+            if text[index] not in "{[":
+                index += 1
                 continue
-            candidate = cls._consume_balanced_json_block(text, start_index)
+            candidate = cls._consume_balanced_json_block(text, index)
             if candidate:
-                return candidate
-        return None
+                blocks.append(candidate)
+                index += len(candidate)
+            else:
+                index += 1
+        return blocks
+
+    @classmethod
+    def _extract_first_balanced_json_block(cls, content: str) -> Optional[str]:
+        """提取最可能是大纲的括号平衡 JSON 块。
+
+        以前直接返回第一个平衡块，于是模型回复里的引用标记（如 ``[1]``）会劫持
+        解析：``json.loads("[1]")`` 成功后整份大纲被替换成一页标题为 "1" 的大纲。
+        现在优先选择含 ``slides``/``title`` 字段的对象，其次选择最长的块。
+        """
+        blocks = cls._extract_balanced_json_blocks(content)
+        if not blocks:
+            return None
+
+        outline_like = [
+            block for block in blocks
+            if block.startswith("{") and ('"slides"' in block or "'slides'" in block)
+        ]
+        if outline_like:
+            return max(outline_like, key=len)
+
+        objects = [block for block in blocks if block.startswith("{")]
+        if objects:
+            return max(objects, key=len)
+
+        return max(blocks, key=len)
 
     @staticmethod
     def _consume_balanced_json_block(content: str, start_index: int) -> Optional[str]:
@@ -316,14 +347,52 @@ class ProjectOutlineNormalizationService:
 
         title_lower = (title_text or "").strip().lower()
         for slide_type, keywords in cls._TITLE_KEYWORDS.items():
-            if any(keyword in title_lower for keyword in keywords):
-                return slide_type
+            if not cls._title_matches_keywords(title_lower, keywords):
+                continue
+            # These types are structurally positional. Without the position check a
+            # mid-deck content page titled "QA体系与测试流程" became a thankyou page
+            # and "Test Coverage Report" became the cover.
+            if not cls._position_allows_slide_type(slide_type, page_number, total_slides):
+                continue
+            return slide_type
 
         if page_number == 1:
             return "title"
-        if page_number == total_slides and any(keyword in title_lower for keyword in ("thanks", "thank", "q&a", "qa")):
+        if page_number == total_slides and cls._title_matches_keywords(
+            title_lower, ("thanks", "thank", "q&a", "qa")
+        ):
             return "thankyou"
         return "content"
+
+    @staticmethod
+    def _title_matches_keywords(title_lower: str, keywords: tuple) -> bool:
+        """Match keywords as whole words for Latin text, as substrings for CJK.
+
+        Plain substring matching made "coverage" match "cover" and "qa体系" match
+        "qa". CJK has no word boundaries, so those keywords stay substring matches.
+        """
+        if not title_lower:
+            return False
+        for keyword in keywords:
+            if keyword.isascii():
+                if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", title_lower):
+                    return True
+            elif keyword in title_lower:
+                return True
+        return False
+
+    @staticmethod
+    def _position_allows_slide_type(slide_type: str, page_number: int, total_slides: int) -> bool:
+        """Whether a positional slide type is plausible at this page number."""
+        if slide_type == "title":
+            return page_number == 1
+        if slide_type == "agenda":
+            return page_number <= 3
+        if slide_type in ("thankyou", "conclusion"):
+            # Allow the closing stretch, not an arbitrary mid-deck page.
+            return total_slides <= 2 or page_number >= max(total_slides - 2, 2)
+        # 'transition' can legitimately appear anywhere.
+        return True
 
     @classmethod
     def _normalize_outline_root(cls, outline_data: Any) -> Dict[str, Any]:

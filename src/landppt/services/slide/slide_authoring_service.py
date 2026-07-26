@@ -193,3 +193,6 @@ class SlideAuthoringService:
 
     async def unlock_slide(self, project_id: str, slide_index: int, user_id: Optional[int]=None) -> bool:
         return await self._streaming_service.unlock_slide(project_id, slide_index, user_id)
+
+    async def get_locked_slide_indices(self, project_id: str) -> set:
+        return await self._streaming_service.get_locked_slide_indices(project_id)

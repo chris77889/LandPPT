@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ...api.models import FileOutlineGenerationResponse
+from ...core.file_access import UnsafeFilePathError, validate_client_file_path
 from ...utils.thread_pool import run_blocking_io
 from .outline_workflow_support import (
     build_file_info,
@@ -83,6 +84,12 @@ class OutlineWorkflowService:
         svc = self._service
         try:
             logger.info("Streaming file outline generation for %s", request.filename)
+            try:
+                validate_client_file_path(request.file_path)
+            except UnsafeFilePathError as exc:
+                logger.error("Rejected file outline request: %s", exc)
+                yield {"error": str(exc)}
+                return
             project_requirements = (
                 build_project_requirements_text(request)
                 + build_transition_page_requirement_text(request)
@@ -182,6 +189,15 @@ class OutlineWorkflowService:
         svc = self._service
         try:
             logger.info("Generating file outline for %s", request.filename)
+            try:
+                validate_client_file_path(request.file_path)
+            except UnsafeFilePathError as exc:
+                logger.error("Rejected file outline request: %s", exc)
+                return FileOutlineGenerationResponse(
+                    success=False,
+                    error=str(exc),
+                    message=f"Outline generation from file failed: {exc}",
+                )
             project_requirements = (
                 build_project_requirements_text(request)
                 + build_transition_page_requirement_text(request)
@@ -236,8 +252,23 @@ class OutlineWorkflowService:
                 logger.warning("summeryanyfile unavailable, using fallback generator: %s", exc)
                 return await self._generate_outline_from_file_fallback(request)
             except Exception as exc:
-                logger.error("summeryanyfile outline generation failed, using fallback: %s", exc)
-                return await self._generate_outline_from_file_fallback(request)
+                # The fallback reads the file as plain text, which cannot recover a
+                # PDF/DOCX and cannot fix an LLM outage. Try it, but report a real
+                # failure when it can't produce anything usable instead of shipping
+                # a mojibake outline as success.
+                logger.error("summeryanyfile outline generation failed, trying fallback: %s", exc)
+                try:
+                    return await self._generate_outline_from_file_fallback(request)
+                except Exception as fallback_exc:
+                    logger.error("Fallback file-outline generation also failed: %s", fallback_exc)
+                    return FileOutlineGenerationResponse(
+                        success=False,
+                        error=str(exc),
+                        message=(
+                            f"从文件生成大纲失败：{exc}"
+                            f"（备用方案同样失败：{fallback_exc}）"
+                        ),
+                    )
         except Exception as exc:
             logger.error("Outline generation from file failed: %s", exc)
             return FileOutlineGenerationResponse(

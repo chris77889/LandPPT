@@ -24,6 +24,7 @@ from ...api.models import (
 from ...ai import get_ai_provider, get_role_provider, AIMessage, MessageRole
 from ...ai.base import TextContent, ImageContent
 from ...core.config import ai_config, app_config
+from ...core.file_access import sanitize_path_component
 from ..runtime.ai_execution import ExecutionContext
 from ..prompts import prompts_manager
 from ..research.enhanced_research_service import EnhancedResearchService
@@ -240,51 +241,76 @@ class ProjectOutlineResearchService:
             slides_data = summeryfile_outline.get('slides', [])
             metadata = summeryfile_outline.get('metadata', {})
             standardized_slides = []
-            for slide in slides_data:
-                content_points = slide.get('content_points', [])
-                if not content_points or not isinstance(content_points, list):
-                    content = slide.get('content', '')
-                    content_points = []
-                    if content:
-                        lines = content.split('\n')
-                        for line in lines:
-                            line = line.strip()
-                            if line:
-                                line = re.sub('^[•\\-\\*]\\s*', '', line)
+            for raw_slide in slides_data:
+                # Per-slide isolation: a single malformed entry used to abort the whole
+                # loop and replace an N-page outline with a 1-page dummy.
+                try:
+                    slide = raw_slide if isinstance(raw_slide, dict) else {'title': str(raw_slide)}
+                    content_points = slide.get('content_points', [])
+                    if not content_points or not isinstance(content_points, list):
+                        content = slide.get('content', '')
+                        content_points = []
+                        if isinstance(content, (list, tuple)):
+                            content_points = [str(item).strip() for item in content if str(item).strip()]
+                        elif content:
+                            lines = str(content).split('\n')
+                            for line in lines:
+                                line = line.strip()
                                 if line:
-                                    content_points.append(line)
-                if not content_points:
-                    content_points = ['内容要点']
-                slide_type = slide.get('slide_type', slide.get('type', 'content'))
-                page_number = slide.get('page_number', slide.get('id', 1))
-                title_text = slide.get('title', '').lower()
-                if slide_type not in ['title', 'content', 'agenda', 'transition', 'thankyou', 'conclusion']:
-                    if page_number == 1 or '标题' in title_text or 'title' in title_text:
-                        slide_type = 'title'
-                    elif '目录' in title_text or 'agenda' in title_text or '大纲' in title_text:
+                                    line = re.sub('^[•\\-\\*]\\s*', '', line)
+                                    if line:
+                                        content_points.append(line)
+                    if not content_points:
+                        content_points = ['内容要点']
+                    slide_type = slide.get('slide_type', slide.get('type', 'content'))
+                    page_number = slide.get('page_number', slide.get('id', 1))
+                    title_text = str(slide.get('title', '') or '').lower()
+                    if slide_type not in ['title', 'content', 'agenda', 'transition', 'thankyou', 'conclusion']:
+                        if page_number == 1 or '标题' in title_text or 'title' in title_text:
+                            slide_type = 'title'
+                        elif '目录' in title_text or 'agenda' in title_text or '大纲' in title_text:
+                            slide_type = 'agenda'
+                        elif '过渡' in title_text or '转场' in title_text or 'transition' in title_text:
+                            slide_type = 'transition'
+                        elif '谢谢' in title_text or 'thank' in title_text or '致谢' in title_text:
+                            slide_type = 'thankyou'
+                        elif '总结' in title_text or '结论' in title_text or 'conclusion' in title_text or ('summary' in title_text):
+                            slide_type = 'conclusion'
+                        else:
+                            slide_type = 'content'
+                    elif ('目录' in title_text or 'agenda' in title_text or '大纲' in title_text) and slide_type == 'content':
                         slide_type = 'agenda'
-                    elif '过渡' in title_text or '转场' in title_text or 'transition' in title_text:
+                    elif ('过渡' in title_text or '转场' in title_text or 'transition' in title_text) and slide_type == 'content':
                         slide_type = 'transition'
-                    elif '谢谢' in title_text or 'thank' in title_text or '致谢' in title_text:
+                    elif ('谢谢' in title_text or 'thank' in title_text or '致谢' in title_text) and slide_type == 'content':
                         slide_type = 'thankyou'
-                    elif '总结' in title_text or '结论' in title_text or 'conclusion' in title_text or ('summary' in title_text):
+                    elif ('总结' in title_text or '结论' in title_text or 'conclusion' in title_text or ('summary' in title_text)) and slide_type == 'content':
                         slide_type = 'conclusion'
-                    else:
-                        slide_type = 'content'
-                elif ('目录' in title_text or 'agenda' in title_text or '大纲' in title_text) and slide_type == 'content':
-                    slide_type = 'agenda'
-                elif ('过渡' in title_text or '转场' in title_text or 'transition' in title_text) and slide_type == 'content':
-                    slide_type = 'transition'
-                elif ('谢谢' in title_text or 'thank' in title_text or '致谢' in title_text) and slide_type == 'content':
-                    slide_type = 'thankyou'
-                elif ('总结' in title_text or '结论' in title_text or 'conclusion' in title_text or ('summary' in title_text)) and slide_type == 'content':
-                    slide_type = 'conclusion'
-                type_mapping = {'title': 'title', 'content': 'content', 'conclusion': 'thankyou', 'agenda': 'agenda', 'transition': 'transition'}
-                mapped_type = type_mapping.get(slide_type, 'content')
-                standardized_slide = {'page_number': slide.get('page_number', slide.get('id', len(standardized_slides) + 1)), 'title': slide.get('title', f'第{len(standardized_slides) + 1}页'), 'content_points': content_points, 'slide_type': slide_type, 'type': mapped_type, 'description': slide.get('description', '')}
-                if 'chart_config' in slide and slide['chart_config']:
-                    standardized_slide['chart_config'] = slide['chart_config']
-                standardized_slides.append(standardized_slide)
+                    # `type` mirrors `slide_type`: the previous mapping had no
+                    # 'thankyou' key, so closing pages fell through to 'content'
+                    # and rendered as ordinary body slides, while 'conclusion'
+                    # was mislabelled 'thankyou'.
+                    type_mapping = {
+                        'title': 'title',
+                        'content': 'content',
+                        'conclusion': 'conclusion',
+                        'thankyou': 'thankyou',
+                        'agenda': 'agenda',
+                        'transition': 'transition',
+                    }
+                    mapped_type = type_mapping.get(slide_type, 'content')
+                    standardized_slide = {'page_number': slide.get('page_number', slide.get('id', len(standardized_slides) + 1)), 'title': slide.get('title', f'第{len(standardized_slides) + 1}页'), 'content_points': content_points, 'slide_type': slide_type, 'type': mapped_type, 'description': slide.get('description', '')}
+                    if 'chart_config' in slide and slide['chart_config']:
+                        standardized_slide['chart_config'] = slide['chart_config']
+                    standardized_slides.append(standardized_slide)
+                except Exception as slide_error:
+                    logger.warning(
+                        'Skipping malformed summeryfile slide %s: %s', raw_slide, slide_error
+                    )
+                    continue
+
+            if slides_data and not standardized_slides:
+                raise ValueError('summeryanyfile 返回的所有幻灯片都无法解析')
             standardized_metadata = {'generated_with_summeryfile': True, 'page_count_settings': {'mode': metadata.get('page_count_mode', 'ai_decide'), 'min_pages': None, 'max_pages': None, 'fixed_pages': None}, 'actual_page_count': len(standardized_slides), 'generated_at': time.time(), 'original_metadata': metadata}
             if 'total_pages' in metadata:
                 standardized_metadata['page_count_settings']['expected_pages'] = metadata['total_pages']
@@ -292,8 +318,10 @@ class ProjectOutlineResearchService:
             logger.info(f'Successfully standardized summeryfile outline: {title}, {len(standardized_slides)} slides')
             return standardized_outline
         except Exception as e:
-            logger.error(f'Error standardizing summeryfile outline: {e}')
-            return {'title': 'PPT大纲', 'slides': [{'page_number': 1, 'title': '标题页', 'content_points': ['演示标题', '演示者', '日期'], 'slide_type': 'title', 'type': 'title', 'description': 'PPT标题页'}], 'metadata': {'generated_with_summeryfile': True, 'page_count_settings': {'mode': 'ai_decide'}, 'actual_page_count': 1, 'generated_at': time.time(), 'error': str(e)}}
+            # Do NOT substitute a 1-page dummy outline here: callers treated it as a
+            # successful result and the user's generated content was silently lost.
+            logger.error(f'Error standardizing summeryfile outline: {e}', exc_info=True)
+            raise
 
     async def conduct_research_and_merge_with_files(self, topic: str, language: str, file_paths: Optional[List[str]]=None, context: Optional[Dict[str, Any]]=None, event_callback=None) -> str:
         """
@@ -377,7 +405,7 @@ class ProjectOutlineResearchService:
             merged_content = ''.join(merged_content_parts)
             temp_dir = Path(tempfile.gettempdir()) / 'landppt_merged'
             temp_dir.mkdir(exist_ok=True)
-            merged_filename = f'merged_{int(time.time())}_{topic[:30]}.md'
+            merged_filename = f'merged_{int(time.time())}_{sanitize_path_component(topic, max_length=30)}.md'
             merged_file_path = temp_dir / merged_filename
             with open(merged_file_path, 'w', encoding='utf-8') as f:
                 f.write(merged_content)

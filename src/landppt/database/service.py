@@ -91,9 +91,18 @@ class DatabaseService:
             "content",
             "content_points",
             "page_number",
+            # Failure markers must round-trip: a slide saved by a failed run holds
+            # an error div and has to be regenerated rather than skipped.
+            "generation_failed",
+            "generation_error",
         ):
             if key in slide_data and slide_data.get(key) is not None:
                 metadata[key] = copy.deepcopy(slide_data[key])
+
+        # A slide that regenerated successfully must lose the stale failure marker.
+        if slide_data.get("html_content") and not slide_data.get("generation_failed"):
+            metadata.pop("generation_failed", None)
+            metadata.pop("generation_error", None)
 
         return metadata
 
@@ -665,6 +674,95 @@ class DatabaseService:
         result = await self.project_repo.update(project_id, update_data)
         return result is not None
 
+    async def set_slide_locked(self, project_id: str, slide_index: int, locked: bool) -> bool:
+        """Persist a slide's regeneration lock in its metadata.
+
+        Stored in ``slide_metadata`` rather than a dedicated column so the flag
+        needs no schema migration.
+        """
+        effective_user_id = current_user_id.get()
+        if effective_user_id is not None:
+            owned = await self.project_repo.get_by_id(project_id, user_id=effective_user_id)
+            if not owned:
+                return False
+
+        slide = await self.slide_repo.get_slide_by_index(project_id, slide_index)
+        if slide is None:
+            logger.warning(
+                f"Cannot set lock: slide {slide_index} not found for project {project_id}"
+            )
+            return False
+
+        metadata = dict(slide.slide_metadata or {})
+        if locked:
+            metadata["locked"] = True
+        else:
+            metadata.pop("locked", None)
+
+        return await self.slide_repo.update_slide(slide.slide_id, {"slide_metadata": metadata})
+
+    async def get_locked_slide_indices(self, project_id: str) -> set:
+        """Indices of slides the user has locked against regeneration."""
+        effective_user_id = current_user_id.get()
+        if effective_user_id is not None:
+            owned = await self.project_repo.get_by_id(project_id, user_id=effective_user_id)
+            if not owned:
+                return set()
+
+        slides = await self.slide_repo.get_slides_by_project_id(project_id)
+        return {
+            slide.slide_index
+            for slide in slides
+            if isinstance(slide.slide_metadata, dict) and slide.slide_metadata.get("locked")
+        }
+
+    async def clear_project_outline(self, project_id: str) -> bool:
+        """Drop the stored outline.
+
+        ``save_project_outline`` deliberately refuses empty payloads so a failed
+        generation cannot wipe a good outline; resetting a workflow stage is the
+        one case where clearing is the intent, so it needs its own entry point.
+        """
+        effective_user_id = current_user_id.get()
+        if effective_user_id is not None:
+            owned = await self.project_repo.get_by_id(project_id, user_id=effective_user_id)
+            if not owned:
+                return False
+
+        result = await self.project_repo.update(
+            project_id,
+            {"outline": None, "updated_at": time.time()},
+            user_id=effective_user_id,
+        )
+        if result is None:
+            logger.error(f"Failed to clear outline for project {project_id}")
+            return False
+
+        logger.info(f"Cleared outline for project {project_id}")
+        return True
+
+    async def clear_project_slides(self, project_id: str) -> bool:
+        """Delete every slide row and the cached combined HTML for a project."""
+        effective_user_id = current_user_id.get()
+        if effective_user_id is not None:
+            owned = await self.project_repo.get_by_id(project_id, user_id=effective_user_id)
+            if not owned:
+                return False
+
+        await self.slide_repo.delete_slides_by_project_id(project_id)
+
+        result = await self.project_repo.update(
+            project_id,
+            {"slides_html": None, "slides_data": None, "updated_at": time.time()},
+            user_id=effective_user_id,
+        )
+        if result is None:
+            logger.error(f"Failed to clear slides for project {project_id}")
+            return False
+
+        logger.info(f"Cleared all slides for project {project_id}")
+        return True
+
     async def cleanup_excess_slides(
         self,
         project_id: str,
@@ -1039,6 +1137,66 @@ class DatabaseService:
         await self.version_repo.create(version_info)
         await self.project_repo.update(project_id, {"version": project.version + 1}, user_id=user_id)
         
+        return True
+
+    async def restore_project_version(
+        self, project_id: str, version: int, user_id: Optional[int] = None
+    ) -> bool:
+        """Restore a project's outline and slides from a saved version.
+
+        Previously only the unused in-memory manager implemented this, so the
+        REST endpoint raised AttributeError and returned 500 on every call.
+        """
+        project = await self.project_repo.get_by_id(project_id, user_id=user_id)
+        if not project:
+            return False
+
+        target = None
+        for saved in (project.versions or []):
+            saved_version = saved.get("version") if isinstance(saved, dict) else getattr(saved, "version", None)
+            if saved_version == version:
+                target = saved
+                break
+
+        if target is None:
+            logger.warning(f"Version {version} not found for project {project_id}")
+            return False
+
+        version_data = target.get("data") if isinstance(target, dict) else getattr(target, "data", None)
+        if not isinstance(version_data, dict):
+            logger.error(f"Version {version} of project {project_id} has no usable data")
+            return False
+
+        update_data: Dict[str, Any] = {"updated_at": time.time()}
+        if "outline" in version_data:
+            update_data["outline"] = version_data["outline"]
+        if "slides_html" in version_data:
+            update_data["slides_html"] = version_data["slides_html"]
+        if "slides_data" in version_data:
+            update_data["slides_data"] = version_data["slides_data"]
+
+        if len(update_data) == 1:
+            logger.error(f"Version {version} of project {project_id} contains nothing restorable")
+            return False
+
+        result = await self.project_repo.update(project_id, update_data, user_id=user_id)
+        if result is None:
+            return False
+
+        # Slide rows must follow the restored deck, or the project keeps serving the
+        # newer slides alongside the older outline.
+        slides_data = update_data.get("slides_data")
+        if isinstance(slides_data, list):
+            await self.slide_repo.delete_slides_by_project_id(project_id)
+            records = [
+                self._slide_record_from_payload(project_id, index, slide)
+                for index, slide in enumerate(slides_data)
+                if isinstance(slide, dict)
+            ]
+            if records:
+                await self.slide_repo.create_slides(records)
+
+        logger.info(f"Restored project {project_id} to version {version}")
         return True
 
     # PPT Template methods

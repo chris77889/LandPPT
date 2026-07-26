@@ -48,6 +48,25 @@ class ProjectOutlinePageCountService:
     def __getattr__(self, name: str):
         return getattr(self._service, name)
 
+    async def _mark_outline_generation_failed(self, project_id: str, reason: str) -> None:
+        """Record a real failure on the stage so the UI can offer a retry."""
+        try:
+            from ..db_project_manager import DatabaseProjectManager
+            db_manager = DatabaseProjectManager()
+            await db_manager.update_stage_status(
+                project_id,
+                'outline_generation',
+                'failed',
+                None,
+                {'message': reason, 'failed_at': time.time()},
+            )
+            logger.info('Marked outline_generation as failed for project %s', project_id)
+        except Exception as stage_error:
+            logger.error(
+                'Could not mark outline_generation as failed for project %s: %s',
+                project_id, stage_error
+            )
+
     async def _execute_outline_generation(self, project_id: str, confirmed_requirements: Dict[str, Any], system_prompt: str) -> str:
         """Execute outline generation as a complete task"""
         try:
@@ -67,11 +86,27 @@ class ProjectOutlinePageCountService:
             page_count_instruction = ''
             expected_page_count = None
             if page_count_mode == 'custom_range':
-                min_pages = page_count_settings.get('min_pages', 8)
-                max_pages = page_count_settings.get('max_pages', 15)
+                min_pages = page_count_settings.get('min_pages') or 8
+                max_pages = page_count_settings.get('max_pages') or 15
                 page_count_instruction = f'- 页数要求：必须严格生成{min_pages}-{max_pages}页的PPT。请确保生成的幻灯片数量在此范围内，不能超出或不足。'
                 expected_page_count = {'min': min_pages, 'max': max_pages, 'mode': 'range'}
                 logger.info(f'Custom page count range set: {min_pages}-{max_pages} pages')
+            elif page_count_mode == 'fixed':
+                # 'fixed' used to fall into the else branch below, so the prompt told
+                # the model to pick its own page count and the user's setting was
+                # then overwritten with {'mode': 'ai_decide'} in the metadata.
+                fixed_pages = page_count_settings.get('fixed_pages') or 10
+                page_count_instruction = (
+                    f'- 页数要求：必须严格生成恰好{fixed_pages}页的PPT，'
+                    f'不能多于或少于{fixed_pages}页。'
+                )
+                expected_page_count = {
+                    'min': fixed_pages,
+                    'max': fixed_pages,
+                    'fixed_pages': fixed_pages,
+                    'mode': 'fixed',
+                }
+                logger.info(f'Fixed page count set: {fixed_pages} pages')
             else:
                 page_count_instruction = '- 页数要求：请根据主题内容的复杂度、深度和逻辑结构，自主决定最合适的页数，确保内容充实且逻辑清晰'
                 expected_page_count = {'mode': 'ai_decide'}
@@ -87,34 +122,22 @@ class ProjectOutlinePageCountService:
             import re
             try:
                 content = response.content.strip()
-                json_str = None
-                json_block_match = re.search('```json\\s*(\\{.*?\\})\\s*```', content, re.DOTALL)
-                if json_block_match:
-                    json_str = json_block_match.group(1)
-                    logger.info('从```json```代码块中提取JSON')
-                else:
-                    code_block_match = re.search('```\\s*(\\{.*?\\})\\s*```', content, re.DOTALL)
-                    if code_block_match:
-                        json_str = code_block_match.group(1)
-                        logger.info('从```代码块中提取JSON')
-                    else:
-                        json_match = re.search('\\{[^{}]*(?:\\{[^{}]*\\}[^{}]*)*\\}', content, re.DOTALL)
-                        if json_match:
-                            json_str = json_match.group()
-                            logger.info('使用正则表达式提取JSON')
-                        else:
-                            json_str = content
-                            logger.info('将整个响应内容作为JSON处理')
-                if json_str:
-                    json_str = json_str.strip()
-                    json_str = re.sub(',\\s*}', '}', json_str)
-                    json_str = re.sub(',\\s*]', ']', json_str)
-                outline_data = json.loads(json_str)
+                # Use the shared candidate parser instead of a bespoke regex. The old
+                # fallback pattern only matched braces nested <= 2 deep, so an outline
+                # containing e.g. "chart_config": {...} made the root object
+                # unmatchable and the regex captured a single inner slide instead,
+                # losing the whole outline.
+                outline_data = self._parse_json_like_outline(content)
+                if outline_data is None:
+                    raise ValueError('模型响应中未找到可解析的JSON大纲')
+                outline_data = self._standardize_outline_format(outline_data)
                 outline_data = await self._validate_and_repair_outline_json(outline_data, confirmed_requirements)
                 if expected_page_count and 'slides' in outline_data:
                     actual_page_count = len(outline_data['slides'])
                     logger.info(f'Generated outline has {actual_page_count} pages')
-                    if expected_page_count['mode'] == 'range':
+                    # 'fixed' is enforced here too: it is just a range whose bounds
+                    # are equal, and it previously got no enforcement at all.
+                    if expected_page_count['mode'] in ('range', 'fixed'):
                         min_pages = expected_page_count['min']
                         max_pages = expected_page_count['max']
                         if actual_page_count < min_pages or actual_page_count > max_pages:
@@ -130,7 +153,11 @@ class ProjectOutlinePageCountService:
                             logger.info(f'Page count {actual_page_count} is within required range {min_pages}-{max_pages}')
                     if 'metadata' not in outline_data:
                         outline_data['metadata'] = {}
-                    outline_data['metadata']['page_count_settings'] = expected_page_count
+                    # Record what the USER asked for; the resolved bounds go alongside
+                    # it. Writing expected_page_count over the top used to report
+                    # mode='ai_decide' for a project that requested a fixed count.
+                    outline_data['metadata']['page_count_settings'] = dict(page_count_settings) or expected_page_count
+                    outline_data['metadata']['resolved_page_count'] = expected_page_count
                     outline_data['metadata']['actual_page_count'] = len(outline_data.get('slides', []))
                 project = await self.project_manager.get_project(project_id)
                 if project:
@@ -170,29 +197,15 @@ class ProjectOutlinePageCountService:
             except Exception as e:
                 logger.error(f'Error parsing outline JSON: {e}')
                 logger.error(f'Response content: {response.content[:500]}...')
-                try:
-                    fallback_outline = {'title': confirmed_requirements.get('topic', 'AI生成的PPT大纲'), 'slides': [{'page_number': 1, 'title': confirmed_requirements.get('topic', '标题页'), 'content_points': ['项目介绍', '主要内容', '核心价值'], 'slide_type': 'title'}, {'page_number': 2, 'title': '主要内容', 'content_points': ['内容要点1', '内容要点2', '内容要点3'], 'slide_type': 'content'}, {'page_number': 3, 'title': '谢谢观看', 'content_points': ['感谢聆听', '欢迎提问'], 'slide_type': 'thankyou'}]}
-                    fallback_outline = await self._validate_and_repair_outline_json(fallback_outline, confirmed_requirements)
-                    project = await self.project_manager.get_project(project_id)
-                    if project:
-                        project.outline = fallback_outline
-                        project.updated_at = time.time()
-                        logger.info(f'Saved fallback outline for project {project_id}')
-                    try:
-                        from ..db_project_manager import DatabaseProjectManager
-                        db_manager = DatabaseProjectManager()
-                        save_success = await db_manager.save_project_outline(project_id, fallback_outline)
-                        if save_success:
-                            logger.info(f'Successfully saved fallback outline to database for project {project_id}')
-                        else:
-                            logger.error(f'Failed to save fallback outline to database for project {project_id}')
-                    except Exception as save_error:
-                        logger.error(f'Exception while saving fallback outline to database: {save_error}')
-                    final_page_count = len(fallback_outline.get('slides', []))
-                    return f"✅ PPT大纲生成完成！（使用备用方案）\n\n标题：{fallback_outline.get('title', '未知')}\n页数：{final_page_count}页\n已保存到数据库"
-                except Exception as fallback_error:
-                    logger.error(f'Error creating fallback outline: {fallback_error}')
-                    return f'❌ 大纲生成失败：{str(e)}\n\n{response.content}'
+                # Previously a generic 3-page placeholder was saved here and reported
+                # with a success marker, so a failed generation looked successful and
+                # silently replaced the user's topic with filler content.
+                # Fail loudly instead, and keep any existing outline untouched.
+                await self._mark_outline_generation_failed(project_id, str(e))
+                return (
+                    f'❌ 大纲生成失败：模型返回的内容无法解析为有效大纲（{str(e)}）。\n'
+                    f'请重试，或调整主题描述后重新生成。'
+                )
         except Exception as e:
             logger.error(f'Error in outline generation: {e}')
             raise
@@ -252,10 +265,20 @@ class ProjectOutlinePageCountService:
             title_slides = [s for s in slides if s.get('slide_type') in ['title', 'cover']]
             conclusion_slides = [s for s in slides if s.get('slide_type') in ['thankyou', 'conclusion']]
             content_slides = [s for s in slides if s.get('slide_type') not in ['title', 'cover', 'thankyou', 'conclusion']]
-            reserved_slots = len(title_slides) + len(conclusion_slides)
-            available_content_slots = target_pages - reserved_slots
-            if available_content_slots > 0 and len(content_slides) > available_content_slots:
-                content_slides = content_slides[:available_content_slots]
+            # When the reserved title/closing pages alone meet or exceed the target,
+            # the previous code left ALL content slides in place and returned more
+            # pages than the maximum. Trim the reserved pages instead so the target
+            # is actually reachable.
+            title_slides = title_slides[:1]
+            available_content_slots = target_pages - (len(title_slides) + len(conclusion_slides))
+            if available_content_slots <= 0:
+                conclusion_slides = []
+                available_content_slots = target_pages - len(title_slides)
+            if available_content_slots <= 0:
+                title_slides = []
+                available_content_slots = target_pages
+            if len(content_slides) > available_content_slots:
+                content_slides = content_slides[:max(available_content_slots, 0)]
             new_slides = title_slides + content_slides + conclusion_slides
             for i, slide in enumerate(new_slides):
                 slide['page_number'] = i + 1
@@ -276,10 +299,22 @@ class ProjectOutlinePageCountService:
             title_slides = [s for s in slides if s.get('slide_type') in ['title', 'cover']]
             conclusion_slides = [s for s in slides if s.get('slide_type') in ['thankyou', 'conclusion']]
             content_slides = [s for s in slides if s.get('slide_type') not in ['title', 'cover', 'thankyou', 'conclusion']]
-            reserved_slots = len(title_slides) + len(conclusion_slides)
-            content_slots_needed = target_pages - reserved_slots
-            if content_slots_needed <= 0:
-                new_slides = title_slides[:1] if title_slides else []
+            # Keep at most one title and one closing page so the content budget is
+            # never negative. Previously a target smaller than the reserved page
+            # count collapsed the entire deck to a single page (or zero), silently
+            # violating the user's minimum.
+            title_slides = title_slides[:1]
+            conclusion_slides = conclusion_slides[:1]
+            content_slots_needed = target_pages - (len(title_slides) + len(conclusion_slides))
+            if content_slots_needed < 0:
+                conclusion_slides = []
+                content_slots_needed = target_pages - len(title_slides)
+            if content_slots_needed < 0:
+                title_slides = []
+                content_slots_needed = target_pages
+
+            if content_slots_needed == 0:
+                new_slides = (title_slides + conclusion_slides)[:target_pages]
             else:
                 if len(content_slides) > content_slots_needed:
                     content_slides = content_slides[:content_slots_needed]

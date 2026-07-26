@@ -203,8 +203,18 @@ async def test_runtime_provider_service_streaming_passes_system_prompt_to_chat_c
 class _OutlineStreamingStubService:
     def __init__(self):
         self.parsed_content_calls = []
+        self.standardize_calls = []
 
     async def _validate_and_repair_outline_json(self, outline_data, confirmed_requirements):
+        return outline_data
+
+    def _standardize_outline_format(self, outline_data):
+        """The streaming parser normalizes locally before validating.
+
+        Local normalization keeps cosmetic variants (a `pages` key, page-number
+        gaps) from turning into a chain of blocking LLM repair calls.
+        """
+        self.standardize_calls.append(outline_data)
         return outline_data
 
     def _parse_outline_content(self, content, project):

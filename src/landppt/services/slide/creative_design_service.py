@@ -155,11 +155,11 @@ class CreativeDesignService:
                 return html_content
 
             logger.warning("模板风格生成失败，回退到默认生成方式")
-            fallback_html = await self._generate_fallback_slide_html(slide_data, page_number, total_pages)
+            fallback_html = self._generate_fallback_slide_html(slide_data, page_number, total_pages)
             return fallback_html
         except Exception as exc:
             logger.error("使用模板风格生成幻灯片失败: %s", exc)
-            fallback_html = await self._generate_fallback_slide_html(slide_data, page_number, total_pages)
+            fallback_html = self._generate_fallback_slide_html(slide_data, page_number, total_pages)
             return fallback_html
 
     async def _build_creative_template_context(
@@ -342,6 +342,7 @@ class CreativeDesignService:
         if project_id not in events_dict:
             event = asyncio.Event()
             events_dict[project_id] = event
+            extraction_failed = False
             try:
                 style_genes = await self._extract_style_genes(template_html)
 
@@ -368,15 +369,20 @@ class CreativeDesignService:
                 return style_genes
             except Exception as exc:
                 logger.warning("提取项目 %s 的设计基因失败，使用默认值: %s", project_id, exc)
-                if not hasattr(self, cache_attr):
-                    setattr(self, cache_attr, {})
-                getattr(self, cache_attr)[project_id] = default_genes
+                # Do NOT cache the default: the memory-cache check at the top of this
+                # method would then return it for the rest of the process lifetime,
+                # so one transient LLM failure permanently degraded the project's
+                # design. Concurrent waiters already fall back to default_genes.
+                extraction_failed = True
                 return default_genes
             finally:
                 event.set()
+                if extraction_failed:
+                    events_dict.pop(project_id, None)
 
-        event = events_dict[project_id]
-        if not event.is_set():
+        # .get(): the creating branch pops the entry when generation failed.
+        event = events_dict.get(project_id)
+        if event is not None and not event.is_set():
             try:
                 await asyncio.wait_for(event.wait(), timeout=_llm_wait_timeout())
             except asyncio.TimeoutError:
@@ -581,6 +587,7 @@ class CreativeDesignService:
         if project_id not in events:
             event = asyncio.Event()
             events[project_id] = event
+            constitution_failed = False
             try:
                 result = await self._generate_global_constitution(
                     confirmed_requirements, template_html, total_pages, first_slide_data)
@@ -599,16 +606,19 @@ class CreativeDesignService:
                 return result
             except Exception as exc:
                 logger.warning("生成全局宪法失败: %s", exc)
-                if not hasattr(self, cache_attr):
-                    setattr(self, cache_attr, {})
-                getattr(self, cache_attr)[project_id] = default
+                # Same reasoning as the style-genes path: caching the default here
+                # made one transient failure permanent for the process lifetime.
+                constitution_failed = True
                 return default
             finally:
                 event.set()
+                if constitution_failed:
+                    events.pop(project_id, None)
 
         # Wait for another coroutine to finish
-        event = events[project_id]
-        if not event.is_set():
+        # .get(): the creating branch pops the entry when generation failed.
+        event = events.get(project_id)
+        if event is not None and not event.is_set():
             try:
                 await asyncio.wait_for(event.wait(), timeout=_llm_wait_timeout())
             except asyncio.TimeoutError:
@@ -694,6 +704,7 @@ class CreativeDesignService:
         if project_id not in events:
             event = asyncio.Event()
             events[project_id] = event
+            generation_succeeded = False
             try:
                 briefs = await self._generate_page_creative_briefs(
                     confirmed_requirements, all_slides, total_pages, global_constitution)
@@ -702,6 +713,7 @@ class CreativeDesignService:
                 if not hasattr(self, cache_attr):
                     setattr(self, cache_attr, {})
                 getattr(self, cache_attr)[project_id] = briefs
+                generation_succeeded = True
                 if hasattr(self, "cache_dirs") and self.cache_dirs:
                     try:
                         cache_file = self.cache_dirs["style_genes"] / f"{project_id}_page_type_guidance.json"
@@ -716,9 +728,15 @@ class CreativeDesignService:
                 return []
             finally:
                 event.set()
+                # Nothing was cached, so drop the event: leaving it in place made a
+                # single transient LLM failure disable page-type briefs for this
+                # project for the rest of the process lifetime.
+                if not generation_succeeded:
+                    events.pop(project_id, None)
 
-        event = events[project_id]
-        if not event.is_set():
+        # .get(): the creating branch pops the entry when generation failed.
+        event = events.get(project_id)
+        if event is not None and not event.is_set():
             try:
                 await asyncio.wait_for(event.wait(), timeout=_llm_wait_timeout())
             except asyncio.TimeoutError:

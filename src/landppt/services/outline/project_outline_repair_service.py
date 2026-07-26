@@ -32,12 +32,14 @@ from ..pyppeteer_pdf_converter import get_pdf_converter
 from ..image.image_service import ImageService
 from ..image.adapters.ppt_prompt_adapter import PPTSlideContext
 from ...utils.thread_pool import run_blocking_io, to_thread
+from .outline_errors import OutlineRepairFailedError
 
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .project_outline_validation_service import ProjectOutlineValidationService
+
 
 class ProjectOutlineRepairService:
     """Extracted logic from ProjectOutlineValidationService."""
@@ -74,11 +76,19 @@ class ProjectOutlineRepairService:
                 except Exception as repair_error:
                     logger.error(f'第 {current_attempt} 次AI修复失败: {str(repair_error)}')
                 current_attempt += 1
-            logger.warning('AI修复达到最大尝试次数(10次)，直接输出当前JSON')
-            return outline_data
+            logger.error(
+                'AI修复达到最大尝试次数(%d次)，大纲仍不合法: %s',
+                max_repair_attempts, '; '.join(validation_errors)
+            )
+            # Surface the failure. Returning the invalid outline let callers save it
+            # and emit success, leaving the project "completed" with an unusable
+            # (sometimes zero-slide) outline.
+            raise OutlineRepairFailedError(validation_errors)
+        except OutlineRepairFailedError:
+            raise
         except Exception as e:
             logger.error(f'验证和修复过程出错: {str(e)}')
-            return outline_data
+            raise OutlineRepairFailedError([str(e)]) from e
 
     def _validate_outline_structure(self, outline_data: Dict[str, Any], confirmed_requirements: Dict[str, Any]) -> List[str]:
         """验证大纲结构，返回错误列表"""
@@ -102,15 +112,19 @@ class ProjectOutlineRepairService:
             page_count_settings = confirmed_requirements.get('page_count_settings', {})
             page_count_mode = page_count_settings.get('mode', 'ai_decide')
             actual_page_count = len(slides)
+            # `or default` rather than get(key, default): callers routinely pass the
+            # keys explicitly set to None, and `actual_page_count < None` raised a
+            # TypeError that was swallowed as a generic validation error — burning
+            # all 10 repair attempts on a comparison bug.
             if page_count_mode == 'custom_range':
-                min_pages = page_count_settings.get('min_pages', 8)
-                max_pages = page_count_settings.get('max_pages', 15)
+                min_pages = page_count_settings.get('min_pages') or 8
+                max_pages = page_count_settings.get('max_pages') or 15
                 if actual_page_count < min_pages:
                     errors.append(f'页数不足：当前{actual_page_count}页，要求至少{min_pages}页')
                 elif actual_page_count > max_pages:
                     errors.append(f'页数过多：当前{actual_page_count}页，要求最多{max_pages}页')
             elif page_count_mode == 'fixed':
-                fixed_pages = page_count_settings.get('fixed_pages', 10)
+                fixed_pages = page_count_settings.get('fixed_pages') or 10
                 if actual_page_count != fixed_pages:
                     errors.append(f'页数不匹配：当前{actual_page_count}页，要求恰好{fixed_pages}页')
             for i, slide in enumerate(slides):
@@ -191,6 +205,49 @@ class ProjectOutlineRepairService:
         """构建AI修复提示词"""
         return prompts_manager.get_repair_prompt(outline_data, validation_errors, confirmed_requirements)
 
+    @staticmethod
+    def _outline_signature(outline_data: Optional[Dict[str, Any]]) -> Optional[tuple]:
+        """Identity of the slide plan that generated slides were built from."""
+        if not isinstance(outline_data, dict):
+            return None
+        slides = outline_data.get('slides')
+        if not isinstance(slides, list):
+            return None
+        titles = []
+        for slide in slides:
+            if isinstance(slide, dict):
+                titles.append(str(slide.get('title', '')))
+            else:
+                titles.append(str(slide))
+        return (len(slides), tuple(titles))
+
+    async def _invalidate_slides_for_new_outline(self, project_id: str, db_manager) -> None:
+        """Drop slides and reset ppt_creation after the outline plan changed.
+
+        Without this the slide-generation skip check sees the old slides as
+        "already generated" and replays the previous deck against the new outline.
+        """
+        try:
+            cleared = await db_manager.clear_project_slides(project_id)
+            if not cleared:
+                logger.error(
+                    'Failed to clear stale slides for project %s after outline change',
+                    project_id
+                )
+                return
+            await db_manager.update_stage_status(
+                project_id, 'ppt_creation', 'pending', 0.0, None
+            )
+            logger.info(
+                'Cleared stale slides and reset ppt_creation for project %s '
+                '(outline plan changed)', project_id
+            )
+        except Exception as invalidate_error:
+            logger.error(
+                'Error invalidating slides after outline change for %s: %s',
+                project_id, invalidate_error
+            )
+
     async def _update_outline_generation_stage(self, project_id: str, outline_data: Dict[str, Any]):
         """Update outline generation stage status and save to database"""
         try:
@@ -200,6 +257,13 @@ class ProjectOutlineRepairService:
             if not project:
                 logger.error(f'❌ Project not found in memory for project {project_id}')
                 return
+            previous_signature = self._outline_signature(project.outline)
+            new_signature = self._outline_signature(outline_data)
+            outline_plan_changed = (
+                previous_signature is not None
+                and new_signature is not None
+                and previous_signature != new_signature
+            )
             if not project.outline:
                 logger.info(f'Project outline is None, setting outline from outline_data')
                 project.outline = outline_data
@@ -219,6 +283,15 @@ class ProjectOutlineRepairService:
             else:
                 logger.error(f'❌ Failed to save outline to database for project {project_id}')
             await self.project_manager.update_project_status(project_id, 'in_progress')
+            if outline_plan_changed:
+                await self._invalidate_slides_for_new_outline(project_id, db_manager)
+                if project.todo_board:
+                    for stage in project.todo_board.stages:
+                        if stage.id == 'ppt_creation':
+                            stage.status = 'pending'
+                            stage.progress = 0.0
+                            stage.result = None
+                            break
             if project.todo_board:
                 for stage in project.todo_board.stages:
                     if stage.id == 'outline_generation':

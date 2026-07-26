@@ -372,6 +372,9 @@ class EnhancedPPTService(PPTService):
     async def clear_cancel_slides_generation(self, project_id: str) -> bool:
         return await self.slide_authoring.clear_cancel_slides_generation(project_id)
 
+    async def _is_slides_generation_cancelled(self, project_id: str, cache=None) -> bool:
+        return await self.slide_authoring._is_slides_generation_cancelled(project_id, cache)
+
     async def generate_slides_streaming(self, project_id: str):
         async for item in self.slide_authoring.generate_slides_streaming(project_id):
             yield item
@@ -621,6 +624,9 @@ class EnhancedPPTService(PPTService):
     async def unlock_slide(self, project_id: str, slide_index: int, user_id: Optional[int] = None) -> bool:
         return await self.slide_authoring.unlock_slide(project_id, slide_index, user_id)
 
+    async def get_locked_slide_indices(self, project_id: str) -> set:
+        return await self.slide_authoring.get_locked_slide_indices(project_id)
+
 
     def _standardize_summeryfile_outline(self, summeryfile_outline: Dict[str, Any]) -> Dict[str, Any]:
         return self.project_outline_workflow._standardize_summeryfile_outline(summeryfile_outline)
@@ -675,18 +681,47 @@ class EnhancedPPTService(PPTService):
 
 
     def _read_file_with_fallback_encoding(self, file_path: str) -> str:
-        """使用多种编码尝试读取文件（在线程池中运行）"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except UnicodeDecodeError:
-            # 尝试其他编码
+        """读取文本文件，依次尝试多种编码（在线程池中运行）。
+
+        Raises:
+            UnicodeDecodeError: 无法作为文本解码时抛出。以前这里用 latin-1 兜底，
+                而 latin-1 对任意字节都不会失败，于是上传的 PDF/二进制会被解码成
+                乱码并当作"章节"生成大纲，还报告成功。
+        """
+        last_error: Optional[UnicodeDecodeError] = None
+        for encoding in ('utf-8', 'utf-8-sig', 'gbk', 'gb18030', 'big5'):
             try:
-                with open(file_path, 'r', encoding='gbk') as f:
-                    return f.read()
-            except:
-                with open(file_path, 'r', encoding='latin-1') as f:
-                    return f.read()
+                with open(file_path, 'r', encoding=encoding) as f:
+                    content = f.read()
+            except UnicodeDecodeError as decode_error:
+                last_error = decode_error
+                continue
+
+            if self._looks_like_binary_text(content):
+                last_error = UnicodeDecodeError(
+                    encoding, b'', 0, 1,
+                    'decoded content looks like binary data, not text'
+                )
+                continue
+            return content
+
+        raise last_error or UnicodeDecodeError(
+            'utf-8', b'', 0, 1, 'file could not be decoded as text'
+        )
+
+    @staticmethod
+    def _looks_like_binary_text(content: str) -> bool:
+        """Heuristic: a decode that "worked" but produced control-character soup."""
+        if not content:
+            return False
+        sample = content[:4096]
+        if '\x00' in sample:
+            return True
+        suspicious = sum(
+            1 for char in sample
+            if ord(char) < 32 and char not in '\t\n\r\f\v'
+        )
+        return suspicious / len(sample) > 0.05
 
     def _save_research_to_temp_file(self, research_content: str) -> str:
         """将研究内容保存到临时文件（在线程池中运行）"""

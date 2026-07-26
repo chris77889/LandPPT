@@ -648,14 +648,35 @@ class BackgroundTaskManager:
         try:
             from .task_store import get_task_store
 
-            task = await get_task_store().find_active_task(task_type, metadata_filter)
+            store = get_task_store()
+            task = await store.find_active_task(task_type, metadata_filter)
             if task:
+                # Apply the same staleness release as the Valkey path above. Without
+                # it, a task left "running" by a crashed worker locked out every
+                # later request forever on deployments with no cache configured.
+                if self._is_task_stale(task):
+                    logger.warning(
+                        "Releasing stale active task %s (%s) found in database",
+                        task.task_id, task_type
+                    )
+                    task.status = TaskStatus.FAILED
+                    task.error = "stale_active_task_released"
+                    task.updated_at = datetime.now()
+                    try:
+                        await store.save_task(task)
+                    except Exception as release_error:
+                        logger.warning(
+                            "Could not persist stale-task release for %s: %s",
+                            task.task_id, release_error
+                        )
+                    return None
+
                 self.tasks[task.task_id] = task
                 logger.info(f"Found active task in database: {task.task_id}")
                 return task
         except Exception as e:
             logger.debug(f"Failed to check database for active tasks: {e}")
-        
+
         return None
 
     def get_task_stats(self) -> Dict[str, int]:

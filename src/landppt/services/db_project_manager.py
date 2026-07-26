@@ -168,6 +168,38 @@ class DatabaseProjectManager:
         finally:
             await db_service.session.close()
 
+    async def set_slide_locked(self, project_id: str, slide_index: int, locked: bool) -> bool:
+        """Persist a slide's regeneration lock."""
+        db_service = await self._get_db_service()
+        try:
+            return await db_service.set_slide_locked(project_id, slide_index, locked)
+        finally:
+            await db_service.session.close()
+
+    async def get_locked_slide_indices(self, project_id: str) -> set:
+        """Indices of slides locked against regeneration."""
+        db_service = await self._get_db_service()
+        try:
+            return await db_service.get_locked_slide_indices(project_id)
+        finally:
+            await db_service.session.close()
+
+    async def clear_project_outline(self, project_id: str) -> bool:
+        """Drop the stored outline (used when resetting a workflow stage)."""
+        db_service = await self._get_db_service()
+        try:
+            return await db_service.clear_project_outline(project_id)
+        finally:
+            await db_service.session.close()
+
+    async def clear_project_slides(self, project_id: str) -> bool:
+        """Delete every slide row plus the cached combined HTML."""
+        db_service = await self._get_db_service()
+        try:
+            return await db_service.clear_project_slides(project_id)
+        finally:
+            await db_service.session.close()
+
     async def batch_save_slides(self, project_id: str, slides_data: List[Dict[str, Any]]) -> bool:
         """批量保存幻灯片 - 高效版本"""
         db_service = await self._get_db_service()
@@ -238,21 +270,35 @@ class DatabaseProjectManager:
         finally:
             await db_service.session.close()
 
+    @staticmethod
+    def _slide_row_to_payload(slide) -> Dict[str, Any]:
+        """Shape a slide row for callers, hoisting flags stored in slide_metadata."""
+        metadata = slide.slide_metadata if isinstance(slide.slide_metadata, dict) else {}
+        payload = {
+            "page_number": slide.slide_index + 1,
+            "title": slide.title,
+            "html_content": slide.html_content,
+            "slide_type": slide.content_type,
+            "is_user_edited": slide.is_user_edited,
+            "slide_id": slide.slide_id,
+            "metadata": slide.slide_metadata,
+        }
+        # Callers check these at the top level to decide whether a page still
+        # needs generating, so surface them out of the metadata blob.
+        if metadata.get("generation_failed"):
+            payload["generation_failed"] = True
+            payload["generation_error"] = metadata.get("generation_error")
+        if metadata.get("locked"):
+            payload["locked"] = True
+        return payload
+
     async def get_single_slide(self, project_id: str, slide_index: int) -> Optional[Dict[str, Any]]:
         """Get a single slide from database by project_id and slide_index"""
         db_service = await self._get_db_service()
         try:
             slide = await db_service.slide_repo.get_slide_by_index(project_id, slide_index)
             if slide:
-                return {
-                    "page_number": slide.slide_index + 1,
-                    "title": slide.title,
-                    "html_content": slide.html_content,
-                    "slide_type": slide.content_type,
-                    "is_user_edited": slide.is_user_edited,
-                    "slide_id": slide.slide_id,
-                    "metadata": slide.slide_metadata
-                }
+                return self._slide_row_to_payload(slide)
             return None
         finally:
             await db_service.session.close()
@@ -266,18 +312,7 @@ class DatabaseProjectManager:
                 return []
 
             slides = await db_service.slide_repo.get_slides_by_project_id(project_id)
-            results: List[Dict[str, Any]] = []
-            for slide in slides:
-                results.append({
-                    "page_number": slide.slide_index + 1,
-                    "title": slide.title,
-                    "html_content": slide.html_content,
-                    "slide_type": slide.content_type,
-                    "is_user_edited": slide.is_user_edited,
-                    "slide_id": slide.slide_id,
-                    "metadata": slide.slide_metadata
-                })
-            return results
+            return [self._slide_row_to_payload(slide) for slide in slides]
         finally:
             await db_service.session.close()
 
@@ -375,6 +410,14 @@ class DatabaseProjectManager:
         finally:
             await db_service.session.close()
     
+    async def restore_project_version(self, project_id: str, version: int, user_id: Optional[int] = None) -> bool:
+        """Restore a project to a saved version. If user_id is provided, enforces ownership."""
+        db_service = await self._get_db_service()
+        try:
+            return await db_service.restore_project_version(project_id, version, user_id=user_id)
+        finally:
+            await db_service.session.close()
+
     async def save_confirmed_requirements(self, project_id: str, requirements: Dict[str, Any], user_id: Optional[int] = None) -> bool:
         """Save confirmed requirements for a project. If user_id is provided, enforces ownership."""
         db_service = await self._get_db_service()

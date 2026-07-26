@@ -24,6 +24,12 @@ from ..services.file_processor import FileProcessor
 from ..services.deep_research_service import DEEPResearchService
 from ..services.research_report_generator import ResearchReportGenerator
 from ..core.config import ai_config, resolve_timeout_seconds
+from ..core.file_access import UnsafeFilePathError, validate_client_file_path
+
+
+ALLOWED_STAGE_STATUSES = frozenset(
+    {"pending", "running", "in_progress", "completed", "failed", "cancelled", "skipped"}
+)
 
 
 def filter_think_tags(content: str) -> str:
@@ -344,40 +350,10 @@ async def get_scenarios():
 # Legacy PPT generation endpoint removed - now using project-based workflow
 # Use POST /projects to create a new project instead
 
-@router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Upload document for PPT generation"""
-    try:
-        # Validate file type
-        allowed_types = [".docx", ".pdf", ".txt", ".md"]
-        file_extension = "." + file.filename.split(".")[-1].lower()
-        
-        if file_extension not in allowed_types:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Unsupported file type. Allowed types: {', '.join(allowed_types)}"
-            )
-        
-        # Read file content
-        content = await file.read()
-        
-        # Process file based on type
-        processed_content = await ppt_service.process_uploaded_file(
-            filename=file.filename,
-            content=content,
-            file_type=file_extension
-        )
-        
-        return {
-            "filename": file.filename,
-            "size": len(content),
-            "type": file_extension,
-            "processed_content": processed_content,
-            "message": "File uploaded and processed successfully"
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+# NOTE: POST /upload is registered once, further down, against FileProcessor.
+# A second, earlier registration used to shadow it (FastAPI matches the first
+# route), so uploads were limited to .docx/.pdf/.txt/.md and the documented
+# FileUploadResponse schema was never returned.
 
 # Legacy task management endpoints removed - now using project-based workflow
 # Use /projects endpoints for project management instead
@@ -539,6 +515,25 @@ async def update_project_stage(
 
         if not status:
             raise HTTPException(status_code=422, detail="Status is required")
+
+        if status not in ALLOWED_STAGE_STATUSES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Invalid stage status. Allowed values: "
+                    + ", ".join(sorted(ALLOWED_STAGE_STATUSES))
+                ),
+            )
+
+        if progress is not None:
+            try:
+                progress = float(progress)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="Progress must be a number")
+            if not 0.0 <= progress <= 100.0:
+                raise HTTPException(
+                    status_code=422, detail="Progress must be between 0 and 100"
+                )
 
         user_ppt_service = get_ppt_service_for_user(user.id)
         success = await user_ppt_service.update_project_stage(
@@ -869,12 +864,25 @@ async def generate_slides(outline: PPTOutline, scenario: str = "general"):
         raise HTTPException(status_code=500, detail=f"Error generating slides: {str(e)}")
 
 @router.post("/files/generate-outline", response_model=FileOutlineGenerationResponse)
-async def generate_outline_from_file(request: FileOutlineGenerationRequest):
+async def generate_outline_from_file(
+    request: FileOutlineGenerationRequest,
+    user: User = Depends(get_current_user_required)
+):
     """使用summeryanyfile从文件生成PPT大纲"""
     try:
-        # 调用增强的PPT服务来生成大纲
-        result = await ppt_service.generate_outline_from_file(request)
+        # file_path arrives from the client: confine it to the upload roots
+        # before anything opens it or hands it to a parser.
+        try:
+            validate_client_file_path(request.file_path)
+        except UnsafeFilePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        user_ppt_service = get_ppt_service_for_user(user.id)
+        result = await user_ppt_service.generate_outline_from_file(request)
         return result
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         logger.error(f"Error generating outline from file: {e}")

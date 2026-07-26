@@ -132,57 +132,62 @@ class SlideHtmlInspectionService:
 
     def _check_html_well_formedness(self, html_content: str, validation_result: Dict[str, Any]) -> None:
         """
-                    Uses lxml's strict parser to check if the HTML is well-formed.
-                    This is the definitive check for syntax errors like unclosed tags.
-                    Modifies the validation_result dictionary in place.
+                    Check tag closure and truncation with an HTML5-aware parser.
+
+                    Deliberately does NOT use lxml's strict parser: libxml2 only knows
+                    HTML 4.0, so it rejects <header>/<section>/<svg>/<canvas> — which the
+                    generation prompts explicitly ask for — while accepting documents
+                    truncated mid-sentence. Modifies validation_result in place.
                     """
+        from .html_structure import analyze_html_structure, describe_structure_errors
+
         try:
-            from lxml import etree
-            encoded_html = html_content.encode('utf-8')
-            parser = etree.HTMLParser(recover=False, encoding='utf-8')
-            etree.fromstring(encoded_html, parser)
-        except ImportError:
-            logger.warning('lxml not available, using basic HTML validation')
-            self._basic_html_syntax_check(html_content, validation_result)
+            report = analyze_html_structure(html_content)
+            validation_result['errors'].extend(describe_structure_errors(report))
+            validation_result['is_truncated'] = report.is_truncated
         except Exception as e:
-            validation_result['errors'].append(f'HTML语法错误: {str(e)}')
+            logger.warning(f'HTML structure analysis failed: {e}')
+            self._basic_html_syntax_check(html_content, validation_result)
 
     def _auto_fix_html_with_parser(self, html_content: str) -> str:
         """
-                    使用 lxml 的恢复解析器自动修复 HTML 错误
-        
-                    Args:
-                        html_content: 原始 HTML 内容
-        
-                    Returns:
-                        修复后的 HTML 内容，如果修复失败则返回原始内容
+                    Close tags that were left open, without re-serialising the document.
+
+                    A previous version round-tripped through lxml's recovery parser. That
+                    lowercased camelCase SVG attributes (viewBox -> viewbox, breaking
+                    scaling) and re-flowed whitespace, so the output always differed from
+                    the input — which callers then mistook for "the fix worked".
+
+                    Returns the repaired HTML, or the original when nothing can be fixed.
                     """
+        from .html_structure import analyze_html_structure
+
         try:
-            from lxml import etree
-            try:
-                encoded_html = html_content.encode('utf-8')
-                strict_parser = etree.HTMLParser(recover=False, encoding='utf-8')
-                etree.fromstring(encoded_html, strict_parser)
+            report = analyze_html_structure(html_content)
+            if report.is_well_formed:
                 logger.debug('HTML 已经是有效的，无需修复')
                 return html_content
-            except:
-                pass
-            parser = etree.HTMLParser(recover=True, encoding='utf-8')
-            tree = etree.fromstring(encoded_html, parser)
-            doctype_match = None
-            import re
-            doctype_pattern = '<!DOCTYPE[^>]*>'
-            doctype_match = re.search(doctype_pattern, html_content, re.IGNORECASE)
-            fixed_html = etree.tostring(tree, encoding='unicode', method='html', pretty_print=True)
-            if doctype_match:
-                doctype = doctype_match.group(0)
-                if not fixed_html.lower().startswith('<!doctype'):
-                    fixed_html = doctype + '\n' + fixed_html
-            logger.info('使用 lxml 解析器自动修复 HTML 成功')
+
+            # Only unclosed tags are mechanically repairable: append the missing
+            # end tags in reverse order. Stray end tags and mid-tag truncation
+            # need a regeneration, so leave those for the caller to retry.
+            if report.trailing_fragment or report.stray_end_tags or not report.unclosed_tags:
+                return html_content
+
+            fixed_html = html_content.rstrip()
+            for tag in report.unclosed_tags:
+                fixed_html += f'</{tag}>'
+
+            repaired_report = analyze_html_structure(fixed_html)
+            if not repaired_report.is_well_formed:
+                logger.info('自动补全标签后仍不合法，保留原始 HTML')
+                return html_content
+
+            logger.info(
+                '自动补全了 %d 个未闭合标签: %s',
+                len(report.unclosed_tags), report.unclosed_tags
+            )
             return fixed_html
-        except ImportError:
-            logger.warning('lxml 不可用，无法使用解析器自动修复')
-            return html_content
         except Exception as e:
             logger.warning(f'解析器自动修复失败: {str(e)}')
             return html_content

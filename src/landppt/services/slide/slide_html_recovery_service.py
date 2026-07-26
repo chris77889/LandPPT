@@ -81,9 +81,18 @@ class SlideHtmlRecoveryService:
                     if validation_result['errors']:
                         logger.info(f'🔧 Attempting automatic parser fix for slide {page_number}')
                         parser_fixed_html = self._auto_fix_html_with_parser(html_content)
+                        # Re-validate: "the string changed" is not evidence of a fix.
+                        # Treating it as one made this branch always win on attempt 1
+                        # and left the retry budget below unreachable.
                         if parser_fixed_html != html_content:
-                            logger.info(f'✅ Successfully fixed HTML with parser for slide {page_number}, returning fixed result')
-                            return await self._apply_auto_layout_repair(parser_fixed_html, slide_data, page_number, total_pages)
+                            repaired_validation = self._validate_html_completeness(parser_fixed_html)
+                            if repaired_validation['is_complete']:
+                                logger.info(f'✅ Parser fix validated for slide {page_number}, returning fixed result')
+                                return await self._apply_auto_layout_repair(parser_fixed_html, slide_data, page_number, total_pages)
+                            logger.warning(
+                                f'Parser fix for slide {page_number} still invalid: '
+                                f"{'; '.join(repaired_validation['errors'])}"
+                            )
                         else:
                             logger.info(f'🔧 Parser did not change HTML for slide {page_number}')
                         if attempt < max_retries - 1:

@@ -5,6 +5,7 @@ Support helpers for file-based outline generation workflows.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -143,6 +144,46 @@ def is_enhanced_research_file(request: Any) -> bool:
         return False
 
 
+# Leading section numbers such as "2.", "3.1", "4.2.1" — anchored, so a version
+# number inside the text ("Web 2.0") is left alone.
+_LEADING_SECTION_NUMBER_RE = re.compile(r"^\s*\d+(?:\.\d+)*[.)]?\s+")
+_HEADING_TERMINATORS = ("。", ".", "?", "!", "；", ";", "：", ":", "，", ",")
+
+
+def _clean_heading_text(line: str) -> str:
+    """Strip markdown hashes and a leading section number from a heading.
+
+    The previous implementation ran ``.replace("1.", "")`` for 1-3 only, which
+    deleted those substrings ANYWHERE in the line ("2.1 Web 2.0 架构" became
+    "1 Web 0 架构") and left 4.-9. numbered headings untouched.
+    """
+    text = (line or "").lstrip()
+    text = re.sub(r"^#+\s*", "", text)
+    text = _LEADING_SECTION_NUMBER_RE.sub("", text)
+    return text.strip(" \t-—–*").strip()
+
+
+def _looks_like_heading(line: str) -> bool:
+    """Heuristic for a section heading in an unstructured text document."""
+    text = (line or "").strip()
+    if not text:
+        return False
+
+    if text.startswith("#"):
+        return True
+    if _LEADING_SECTION_NUMBER_RE.match(text):
+        return True
+
+    # A short line with no sentence-ending punctuation. Bullets are content, not
+    # headings: treating every short line as a heading exploded documents of
+    # short bullets into one empty pseudo-section per bullet.
+    if text.startswith(("-", "*", "•", "·", "‣")):
+        return False
+    if text.endswith(_HEADING_TERMINATORS):
+        return False
+    return len(text) < 50
+
+
 def create_outline_from_file_content(content: str, request: Any) -> Dict[str, Any]:
     try:
         lines = [line.strip() for line in (content or "").splitlines() if line.strip()]
@@ -154,22 +195,12 @@ def create_outline_from_file_content(content: str, request: Any) -> Dict[str, An
         sections = []
         current_section = None
         for line in lines:
-            is_heading = (
-                line.startswith(tuple(f"{idx}." for idx in range(1, 10)))
-                or line.startswith(("#", "##", "###"))
-                or (len(line) < 50 and not line.endswith(("。", ".", "?", "!", "；", ";", "：", ":")))
-            )
+            is_heading = _looks_like_heading(line)
             if is_heading:
                 if current_section:
                     sections.append(current_section)
                 current_section = {
-                    "title": (
-                        line.replace("#", "")
-                        .replace("1.", "")
-                        .replace("2.", "")
-                        .replace("3.", "")
-                        .strip()
-                    ),
+                    "title": _clean_heading_text(line),
                     "content": [],
                 }
                 continue

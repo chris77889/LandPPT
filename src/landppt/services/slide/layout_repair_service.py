@@ -37,13 +37,10 @@ class LayoutRepairService:
 
             import re
 
-            lowered = inspection_report.lower()
-
-            # Quick allow-list: if report mentions medium/high anywhere, perform repair
-            if any(level in lowered for level in ("medium", "high")):
-                return False
-
-            # Look for structured severity section, ensure all entries are low
+            # Read the structured severity fields ONLY. Scanning the whole report
+            # for "medium"/"high" also matched ordinary recommendation prose
+            # ("consider highlighting...", "increase medium-gray contrast"), so
+            # all-low reports still triggered a full LLM rewrite of a good slide.
             inline_severity = re.findall(
                 r"-\s*severity\s*:\s*([^\n\r]+)",
                 inspection_report,
@@ -52,7 +49,7 @@ class LayoutRepairService:
 
             if inline_severity:
                 for entry in inline_severity:
-                    levels = re.findall(r"(high|medium|low)", entry, flags=re.IGNORECASE)
+                    levels = re.findall(r"\b(high|medium|low)\b", entry, flags=re.IGNORECASE)
                     if not levels:
                         return False
                     if any(level.lower() != "low" for level in levels):
@@ -75,7 +72,11 @@ class LayoutRepairService:
                         return False
                 return True
 
-            # No recognizable severity info -> fall back to repairing
+            # No structured severity field at all: fall back to a whole-word scan
+            # of the free text, then to repairing.
+            if re.search(r"\b(medium|high)\b", inspection_report, flags=re.IGNORECASE):
+                return False
+
             return False
 
     def _inject_anti_overflow_css(self, html_content: str) -> str:
@@ -407,8 +408,20 @@ class LayoutRepairService:
 
                 repaired_html = self._clean_html_response(repair_content)
                 if repaired_html and repaired_html.strip() and repaired_html.strip() != html_content.strip():
-                    logger.info(f"Auto layout repair applied for slide {page_number}")
-                    return repaired_html
+                    # Never swap in unvalidated output: a truncated or refusal
+                    # response is non-empty and differs from the original, so those
+                    # checks alone would overwrite a working slide with a broken one.
+                    repaired_validation = self._validate_html_completeness(repaired_html)
+                    if repaired_validation.get('is_complete'):
+                        logger.info(f"Auto layout repair applied for slide {page_number}")
+                        return repaired_html
+
+                    logger.warning(
+                        "Discarding layout repair for slide %s: repaired HTML is invalid (%s)",
+                        page_number,
+                        '; '.join(repaired_validation.get('errors') or ['unknown'])
+                    )
+                    return html_content
 
                 logger.debug("Auto layout repair produced no improvements, keeping original HTML")
 

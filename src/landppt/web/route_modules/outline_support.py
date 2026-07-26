@@ -632,6 +632,12 @@ async def _stream_outline_from_confirmed_sources_v2(
         else "正在处理上传文件并生成大纲..."
     )
 
+    # Tasks spawned below must be cancelled when this generator is closed (client
+    # disconnect / page refresh). Otherwise they keep running detached, burning LLM
+    # cost for a result nobody reads, and a second request starts a rival run that
+    # races them to persist the outline.
+    spawned_tasks: List[asyncio.Task] = []
+
     try:
         yield f"data: {json.dumps({'ping': True})}\n\n"
         yield (
@@ -656,6 +662,7 @@ async def _stream_outline_from_confirmed_sources_v2(
                     event_callback=_research_event_cb,
                 )
             )
+            spawned_tasks.append(prepare_task)
             last_ping_at = time.time()
 
             while not prepare_task.done():
@@ -723,6 +730,7 @@ async def _stream_outline_from_confirmed_sources_v2(
                     event_callback=research_event_callback,
                 )
             )
+            spawned_tasks.append(generation_task)
             last_ping_at = time.time()
             while not generation_task.done():
                 done, _ = await asyncio.wait(
@@ -773,7 +781,30 @@ async def _stream_outline_from_confirmed_sources_v2(
         yield f"data: {json.dumps({'done': True, 'llm_call_count': llm_call_count})}\n\n"
     except Exception as e:
         logger.error(f"Error streaming source outline for project {project_id}: {e}")
+        # Record the failure so the stage does not stay "running" forever.
+        try:
+            from ...services.db_project_manager import DatabaseProjectManager
+
+            await DatabaseProjectManager().update_stage_status(
+                project_id,
+                "outline_generation",
+                "failed",
+                None,
+                {"message": str(e), "failed_at": time.time()},
+            )
+        except Exception as stage_error:
+            logger.warning(
+                "Could not mark outline_generation failed for %s: %s", project_id, stage_error
+            )
         yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+    finally:
+        for task in spawned_tasks:
+            if not task.done():
+                logger.info(
+                    "Cancelling orphaned outline generation task for project %s", project_id
+                )
+                task.cancel()
+
 
 def _normalize_content_source_urls(content_urls: Optional[str], max_urls: int = 50) -> List[str]:
     """Parse and normalize URL input from textarea/comma-separated content."""

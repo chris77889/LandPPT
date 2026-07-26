@@ -320,7 +320,31 @@ class OpenAIProvider(AIProvider):
             return None
         return min(matches, key=lambda item: item[0])
 
+    @staticmethod
+    def _longest_partial_marker_suffix(text: str, markers: Tuple[str, ...]) -> int:
+        """Length of the trailing text that could still grow into a marker.
+
+        Streaming chunks split anywhere, so a buffer ending in ``"...<thi"`` must be
+        held back rather than emitted or discarded.
+        """
+        lowered = text.lower()
+        longest = 0
+        for marker in markers:
+            marker_lower = marker.lower()
+            # Try the longest prefix of the marker that the text ends with.
+            for length in range(min(len(marker_lower) - 1, len(lowered)), 0, -1):
+                if lowered.endswith(marker_lower[:length]):
+                    longest = max(longest, length)
+                    break
+        return longest
+
     async def _filter_think_chunks(self, chunks: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+        """Strip <think> blocks from a stream without losing or leaking content.
+
+        Markers are matched across chunk boundaries: a split ``</think>`` used to
+        leave ``in_think_tag`` permanently true and silently swallow the rest of the
+        response, and text preceding a ``<think>`` in the same chunk was dropped.
+        """
         buffer = ""
         in_think_tag = False
         open_markers = ("<think", "＜think")
@@ -331,43 +355,55 @@ class OpenAIProvider(AIProvider):
                 continue
 
             buffer += chunk_content
-            processed_content = ""
-            remaining_buffer = buffer
+            emit = ""
 
-            while remaining_buffer:
+            while buffer:
                 if not in_think_tag:
-                    match = self._find_first_match(remaining_buffer, open_markers)
+                    match = self._find_first_match(buffer, open_markers)
                     if match is None:
-                        processed_content += remaining_buffer
-                        remaining_buffer = ""
+                        # Keep back anything that might be the start of a marker.
+                        hold = self._longest_partial_marker_suffix(buffer, open_markers)
+                        if hold:
+                            emit += buffer[:-hold]
+                            buffer = buffer[-hold:]
+                        else:
+                            emit += buffer
+                            buffer = ""
                         break
 
                     think_start, _ = match
-                    processed_content += remaining_buffer[:think_start]
-                    in_think_tag = True
-                    remaining_buffer = remaining_buffer[think_start:]
+                    emit += buffer[:think_start]
+                    candidate = buffer[think_start:]
 
-                    tag_end_candidates = [remaining_buffer.find(">"), remaining_buffer.find("＞")]
+                    # Wait for the tag to actually close before skipping it: the
+                    # opening tag itself may be split across chunks.
+                    tag_end_candidates = [candidate.find(">"), candidate.find("＞")]
                     tag_end_candidates = [idx for idx in tag_end_candidates if idx != -1]
-                    if tag_end_candidates:
-                        remaining_buffer = remaining_buffer[min(tag_end_candidates) + 1:]
-                    else:
-                        remaining_buffer = ""
+                    if not tag_end_candidates:
+                        buffer = candidate
                         break
+
+                    in_think_tag = True
+                    buffer = candidate[min(tag_end_candidates) + 1:]
                 else:
-                    match = self._find_first_match(remaining_buffer, close_markers)
+                    match = self._find_first_match(buffer, close_markers)
                     if match is None:
-                        remaining_buffer = ""
+                        # Discard reasoning text, but retain a possible partial
+                        # closing marker so the next chunk can complete it.
+                        hold = self._longest_partial_marker_suffix(buffer, close_markers)
+                        buffer = buffer[-hold:] if hold else ""
                         break
 
                     think_end, close_marker = match
                     in_think_tag = False
-                    remaining_buffer = remaining_buffer[think_end + len(close_marker):]
+                    buffer = buffer[think_end + len(close_marker):]
 
-            buffer = remaining_buffer
+            if emit:
+                yield emit
 
-            if not in_think_tag and processed_content:
-                yield processed_content
+        # Flush anything held back that never became a marker.
+        if buffer and not in_think_tag:
+            yield buffer
 
     def _filter_think_content(self, content: str) -> str:
         """Filter out model reasoning/think blocks before exposing output.
@@ -815,11 +851,17 @@ class AnthropicProvider(AIProvider):
                 base_url = base_url + '/v1'
             url = f"{base_url}/messages"
 
-            # Build request body
+            # Build request body. max_tokens is REQUIRED by the Anthropic Messages
+            # API — omitting it makes every streaming request fail with 400.
             body = {
                 "model": model,
                 "messages": claude_messages,
                 "temperature": temperature,
+                "max_tokens": int(
+                    config.get("anthropic_max_tokens")
+                    or config.get("max_completion_tokens")
+                    or 8192
+                ),
                 "stream": True
             }
             if system_message:
@@ -831,7 +873,10 @@ class AnthropicProvider(AIProvider):
                 ("Authorization", {"Authorization": f"Bearer {api_key}"})  # MiniMax/other compatible APIs
             ]
 
-            for auth_name, auth_header in auth_methods:
+            last_error: Optional[str] = None
+
+            for index, (auth_name, auth_header) in enumerate(auth_methods):
+                is_last_method = index == len(auth_methods) - 1
                 try:
                     headers = {
                         "Content-Type": "application/json",
@@ -841,18 +886,20 @@ class AnthropicProvider(AIProvider):
 
                     async with aiohttp.ClientSession(timeout=_build_aiohttp_timeout(config)) as session:
                         async with session.post(url, headers=headers, json=body) as response:
-                            if response.status == 401 and auth_name == "x-api-key":
-                                # x-api-key failed, try Authorization header
-                                logger.debug("x-api-key auth failed, trying Authorization header")
-                                break  # Exit inner loop to try next auth method
-
                             if response.status != 200:
                                 error_text = await response.text()
-                                if auth_name == "x-api-key":
-                                    # Try next auth method
-                                    logger.debug(f"x-api-key auth failed ({response.status}), trying Authorization")
-                                    break  # Exit inner loop to try next auth method
-                                raise Exception(f"API error {response.status}: {error_text}")
+                                last_error = f"API error {response.status}: {error_text}"
+                                if not is_last_method:
+                                    # NOTE: `continue`, not `break` — the enclosing
+                                    # `async with` blocks are not loops, so `break`
+                                    # left the auth loop and the remaining methods
+                                    # (used by MiniMax and other compatible APIs)
+                                    # were never attempted.
+                                    logger.debug(
+                                        f"{auth_name} auth failed ({response.status}), trying next auth method"
+                                    )
+                                    continue
+                                raise Exception(last_error)
 
                             # Parse streaming response (SSE format)
                             async for line in response.content:
@@ -875,11 +922,13 @@ class AnthropicProvider(AIProvider):
                             return  # Success, exit the function
 
                 except Exception as auth_error:
+                    last_error = str(auth_error)
                     logger.debug(f"Auth method {auth_name} failed: {auth_error}")
+                    if is_last_method:
+                        raise
                     continue  # Try next auth method
 
-            # If we get here, all auth methods failed
-            raise Exception("All authentication methods failed")
+            raise Exception(f"All authentication methods failed: {last_error}")
 
         except Exception as e:
             logger.error(f"Anthropic streaming API error: {e}")

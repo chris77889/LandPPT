@@ -223,6 +223,10 @@ class SlideGenerationService:
                 db_manager_status = None
                 generated_slide_indices: set[int] = set()
                 processed_slide_indices: set[int] = set()
+                # Slides whose generation raised. Kept separate from
+                # generated_slide_indices so failures are neither billed nor
+                # reported as successes.
+                failed_slide_indices: set[int] = set()
                 ppt_creation_started_at = time.time()
                 credits_provider_name: str | None = None
                 credits_reference_id: str | None = None
@@ -398,8 +402,13 @@ class SlideGenerationService:
                                 pass
                             yield f"data: {json.dumps({'type': 'error', 'message': cancel_message})}\n\n"
                             return
-                    except Exception:
-                        pass
+                    except Exception as cancel_check_error:
+                        # Never silently: a broken cancel check makes the stop
+                        # button a no-op for the whole run.
+                        logger.error(
+                            "Cancellation check failed for project %s: %s",
+                            project_id, cancel_check_error, exc_info=True
+                        )
                     # 确定本批次要生成的幻灯片
                     batch_end = min(i + parallel_count, len(slides))
                     batch_slides = slides[i:batch_end]
@@ -433,6 +442,19 @@ class SlideGenerationService:
                                 if s and s.get('page_number') == page_number:
                                     existing_slide = s
                                     break
+
+                        # A slide saved by a FAILED run holds an error div. It must not
+                        # count as "already generated", or the broken page can never be
+                        # repaired by re-running generation.
+                        if (
+                            existing_slide
+                            and existing_slide.get('generation_failed')
+                            and not existing_slide.get('is_user_edited', False)
+                        ):
+                            logger.info(
+                                "第%d页上次生成失败，将重新生成", idx + 1
+                            )
+                            existing_slide = None
 
                         if existing_slide and existing_slide.get('html_content'):
                             # 幻灯片已存在，跳过
@@ -511,13 +533,15 @@ class SlideGenerationService:
                             # 流式处理完成的任务 - 一旦某页生成完成，立即展示和添加
                             for coro in asyncio.as_completed(tasks):
                                 idx, slide, html_content, error = await coro
-                                try:
-                                    if error:
-                                        raise error
+                                generation_failed = False
+                                failure_reason = None
+                                if error:
+                                    generation_failed = True
+                                    failure_reason = str(error)
+                                    logger.error(f"❌ 流式生成第{idx+1}页失败: {error}")
+                                    html_content = f"<div style='padding: 50px; text-align: center; color: red;'>生成失败：{failure_reason}</div>"
+                                else:
                                     logger.info(f"✅ 流式生成第{idx+1}页成功")
-                                except Exception as e:
-                                    logger.error(f"❌ 流式生成第{idx+1}页失败: {e}")
-                                    html_content = f"<div style='padding: 50px; text-align: center; color: red;'>生成失败：{str(e)}</div>"
 
                                 # 创建幻灯片数据
                                 slide_data = {
@@ -526,6 +550,11 @@ class SlideGenerationService:
                                     "html_content": html_content,
                                     "is_user_edited": False
                                 }
+                                if generation_failed:
+                                    # Flagged so the skip-existing check re-generates
+                                    # this page instead of treating it as finished.
+                                    slide_data["generation_failed"] = True
+                                    slide_data["generation_error"] = failure_reason
 
                                 # 更新项目数据
                                 while len(project.slides_data) <= idx:
@@ -537,7 +566,10 @@ class SlideGenerationService:
                                     from ..db_project_manager import DatabaseProjectManager
                                     db_manager = DatabaseProjectManager()
                                     project.updated_at = time.time()
-                                    generated_slide_indices.add(idx)
+                                    if generation_failed:
+                                        failed_slide_indices.add(idx)
+                                    else:
+                                        generated_slide_indices.add(idx)
                                     await db_manager.save_single_slide(project_id, idx, slide_data, skip_if_user_edited=True)
                                     logger.info(f"💾 第{idx+1}页已保存到数据库")
                                 except Exception as save_error:
@@ -605,7 +637,11 @@ class SlideGenerationService:
                                     error_slide = {
                                         "page_number": idx + 1,
                                         "title": slide.get('title', f'第{idx+1}页'),
-                                        "html_content": f"<div style='padding: 50px; text-align: center; color: red;'>生成失败：{str(e)}</div>"
+                                        "html_content": f"<div style='padding: 50px; text-align: center; color: red;'>生成失败：{str(e)}</div>",
+                                        # Flagged so the skip-existing check re-generates
+                                        # this page instead of treating it as finished.
+                                        "generation_failed": True,
+                                        "generation_error": str(e),
                                     }
 
                                     while len(project.slides_data) <= idx:
@@ -617,7 +653,7 @@ class SlideGenerationService:
                                         from ..db_project_manager import DatabaseProjectManager
                                         db_manager = DatabaseProjectManager()
                                         project.updated_at = time.time()
-                                        generated_slide_indices.add(idx)
+                                        failed_slide_indices.add(idx)
                                         await db_manager.save_single_slide(project_id, idx, error_slide, skip_if_user_edited=True)
                                     except Exception as save_error:
                                         logger.error(f"Failed to save error slide {idx+1} to database: {save_error}")
@@ -634,7 +670,11 @@ class SlideGenerationService:
                 project.slides_html = self._combine_slides_to_full_html(
                     project.slides_data, outline.get('title', project.title)
                 )
-                project.status = "completed"
+                # Only claim completion when every page actually rendered. A partially
+                # failed run stays in_progress so the user can retry: the good pages
+                # are skipped and the flagged failures regenerate.
+                has_failures = bool(failed_slide_indices)
+                project.status = "in_progress" if has_failures else "completed"
                 project.updated_at = time.time()
 
                 # Update project status and stage completion (slides already saved individually)
@@ -646,20 +686,39 @@ class SlideGenerationService:
                     await db_manager.update_project_data(project_id, {
                         "slides_html": project.slides_html,
                         "slides_data": project.slides_data,
-                        "status": "completed",
+                        "status": project.status,
                         "updated_at": time.time()
                     })
                     logger.info(f"Successfully updated project data for project {project_id}")
 
-                    # Update PPT creation stage status to completed
-                    await db_manager.update_stage_status(
-                        project_id,
-                        "ppt_creation",
-                        "completed",
-                        100.0,
-                        {"slides_count": len(slides), "completed_at": time.time()}
-                    )
-                    logger.info(f"Successfully updated PPT creation stage to completed for project {project_id}")
+                    failed_pages = sorted(index + 1 for index in failed_slide_indices)
+                    if has_failures:
+                        await db_manager.update_stage_status(
+                            project_id,
+                            "ppt_creation",
+                            "failed",
+                            None,
+                            {
+                                "slides_count": len(slides),
+                                "failed_pages": failed_pages,
+                                "succeeded_count": len(slides) - len(failed_pages),
+                                "message": f"以下页面生成失败：{failed_pages}",
+                                "failed_at": time.time(),
+                            }
+                        )
+                        logger.warning(
+                            "PPT creation for project %s finished with %d failed page(s): %s",
+                            project_id, len(failed_pages), failed_pages
+                        )
+                    else:
+                        await db_manager.update_stage_status(
+                            project_id,
+                            "ppt_creation",
+                            "completed",
+                            100.0,
+                            {"slides_count": len(slides), "completed_at": time.time()}
+                        )
+                        logger.info(f"Successfully updated PPT creation stage to completed for project {project_id}")
 
                 except Exception as save_error:
                     logger.error(f"Failed to update project status in database: {save_error}")
@@ -718,9 +777,29 @@ class SlideGenerationService:
                             exc_info=True,
                         )
 
-                # Send completion message
-                complete_message = f'✅ PPT制作完成！成功生成 {len(slides)} 页幻灯片'
-                complete_response = {'type': 'complete', 'message': complete_message}
+                # Send completion message. Report the real outcome: previously this
+                # always claimed every page succeeded, even when pages were error divs.
+                if has_failures:
+                    failed_pages = sorted(index + 1 for index in failed_slide_indices)
+                    complete_response = {
+                        'type': 'complete',
+                        'partial': True,
+                        'failed_pages': failed_pages,
+                        'succeeded': len(slides) - len(failed_pages),
+                        'total': len(slides),
+                        'message': (
+                            f'⚠️ PPT制作部分完成：{len(slides) - len(failed_pages)}/{len(slides)} 页成功，'
+                            f'第 {", ".join(str(page) for page in failed_pages)} 页生成失败，可重新生成这些页面'
+                        ),
+                    }
+                else:
+                    complete_response = {
+                        'type': 'complete',
+                        'partial': False,
+                        'succeeded': len(slides),
+                        'total': len(slides),
+                        'message': f'✅ PPT制作完成！成功生成 {len(slides)} 页幻灯片',
+                    }
                 yield f"data: {json.dumps(complete_response)}\n\n"
 
             except Exception as e:

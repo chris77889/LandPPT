@@ -638,6 +638,16 @@ class ProjectWorkflowStageService:
                     logger.error(f"Stage {stage_id} not found in project {project_id}")
                     return False
 
+                # Stop any in-flight generation first: otherwise it keeps writing
+                # slides after the wipe below and the reset silently un-does itself.
+                try:
+                    await self._service.request_cancel_slides_generation(project_id)
+                except Exception as cancel_error:
+                    logger.warning(
+                        "Could not signal cancellation before resetting project %s: %s",
+                        project_id, cancel_error
+                    )
+
                 # Reset all stages from the specified stage onwards
                 for i in range(stage_index, len(project.todo_board.stages)):
                     stage = project.todo_board.stages[i]
@@ -685,15 +695,23 @@ class ProjectWorkflowStageService:
                             None
                         )
 
-                    # 如果重置了大纲生成阶段，清除数据库中的大纲和幻灯片数据
+                    # 如果重置了大纲生成阶段，清除数据库中的大纲和幻灯片数据。
+                    # 必须用专用的 clear_* 方法：save_project_outline 会拒绝空数据，
+                    # save_project_slides 对空列表不会删除幻灯片行。
+                    if stage_id in ("outline_generation", "ppt_creation"):
+                        if not await db_manager.clear_project_slides(project_id):
+                            logger.error(
+                                "Failed to clear slides while resetting project %s from %s",
+                                project_id, stage_id
+                            )
+                            return False
+
                     if stage_id == "outline_generation":
-                        # 清除大纲数据
-                        await db_manager.save_project_outline(project_id, None)
-                        # 清除幻灯片数据
-                        await db_manager.save_project_slides(project_id, "", [])
-                    elif stage_id == "ppt_creation":
-                        # 只清除幻灯片数据，保留大纲
-                        await db_manager.save_project_slides(project_id, "", [])
+                        if not await db_manager.clear_project_outline(project_id):
+                            logger.error(
+                                "Failed to clear outline while resetting project %s", project_id
+                            )
+                            return False
 
                     logger.info(f"Successfully saved reset stages to database for project {project_id}")
 

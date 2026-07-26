@@ -48,6 +48,27 @@ class ProjectOutlineStreamingService:
     def __getattr__(self, name: str):
         return getattr(self._service, name)
 
+    async def _mark_streaming_outline_failed(self, project_id: str, reason: str) -> None:
+        """Record a real failure so the UI shows an error and a retry button.
+
+        Without this the stage stays "running" forever and the todo board spins.
+        """
+        try:
+            from ..db_project_manager import DatabaseProjectManager
+            db_manager = DatabaseProjectManager()
+            await db_manager.update_stage_status(
+                project_id,
+                'outline_generation',
+                'failed',
+                None,
+                {'message': reason, 'failed_at': time.time()},
+            )
+        except Exception as stage_error:
+            logger.error(
+                'Could not mark outline_generation as failed for project %s: %s',
+                project_id, stage_error
+            )
+
     @staticmethod
     def _get_outline_streaming_system_prompt() -> str:
         """流式大纲生成需要更强的输出约束，避免模型复述任务说明。"""
@@ -83,6 +104,11 @@ class ProjectOutlineStreamingService:
                 json_str = content
 
             structured_outline = json.loads(json_str)
+            # Normalise locally BEFORE validating. Skipping this turned cosmetic
+            # variants (a `pages` key, a nested `outline`, page-number gaps) into
+            # up to 10 sequential blocking LLM repair calls for data one local
+            # function already knows how to fix.
+            structured_outline = self._standardize_outline_format(structured_outline)
             structured_outline = await self._validate_and_repair_outline_json(structured_outline, confirmed_requirements)
             return structured_outline, False
         except Exception as parse_error:
@@ -90,6 +116,9 @@ class ProjectOutlineStreamingService:
 
         logger.warning('Streaming outline JSON parse failed, falling back to text outline parsing: %s', json_parse_error)
         structured_outline = self._parse_outline_content(content, project)
+        structured_outline = self._standardize_outline_format(structured_outline)
+        # No further fallback: if this also fails the caller must report a failure
+        # rather than persist an unusable outline and emit success.
         structured_outline = await self._validate_and_repair_outline_json(structured_outline, confirmed_requirements)
         return structured_outline, True
 
@@ -154,8 +183,13 @@ class ProjectOutlineStreamingService:
 
         research_report = None
         last_ping_at = time.time()
+        # Cancel any still-running research when this generator is closed (client
+        # disconnect). Left detached it keeps consuming LLM/search budget for a
+        # result nobody will read.
+        spawned_research_tasks: List[asyncio.Task] = []
         try:
             research_task = asyncio.create_task(_execute_research(research_service, provider))
+            spawned_research_tasks.append(research_task)
             while not research_task.done():
                 done, _ = await asyncio.wait({research_task}, timeout=1.0)
                 while not _research_status_queue.empty():
@@ -187,6 +221,7 @@ class ProjectOutlineStreamingService:
                 last_ping_at = time.time()
                 try:
                     research_task = asyncio.create_task(_execute_research(research_service, provider))
+                    spawned_research_tasks.append(research_task)
                     while not research_task.done():
                         done, _ = await asyncio.wait({research_task}, timeout=1.0)
                         while not _research_status_queue.empty():
@@ -211,6 +246,11 @@ class ProjectOutlineStreamingService:
                 logger.warning('Research failed for project %s, proceeding without research context: %s', project_id, research_error)
                 yield await self._build_streaming_research_status_event('research_skip', '联网研究失败，改为直接生成大纲...', 0.08)
                 return
+        finally:
+            for task in spawned_research_tasks:
+                if not task.done():
+                    logger.info('Cancelling orphaned research task for project %s', project_id)
+                    task.cancel()
 
         while not _research_status_queue.empty():
             msg, prog = _research_status_queue.get_nowait()
@@ -416,7 +456,12 @@ class ProjectOutlineStreamingService:
             topic = confirmed_requirements.get('topic', project.topic)
             target_audience = confirmed_requirements.get('target_audience', '普通大众')
             ppt_style = confirmed_requirements.get('ppt_style', 'general')
-            prompt = prompts_manager.get_streaming_outline_prompt(topic=topic, target_audience=target_audience, ppt_style=ppt_style, page_count_instruction=page_count_instruction, research_section='', include_transition_pages=bool(confirmed_requirements.get('include_transition_pages', False)))
+            # The direct-generation branch previously ignored the project language,
+            # so an English project received a Chinese outline.
+            outline_language = 'zh'
+            if getattr(project, 'project_metadata', None):
+                outline_language = project.project_metadata.get('language') or 'zh'
+            prompt = prompts_manager.get_streaming_outline_prompt(topic=topic, target_audience=target_audience, ppt_style=ppt_style, page_count_instruction=page_count_instruction, research_section='', include_transition_pages=bool(confirmed_requirements.get('include_transition_pages', False)), language=outline_language)
             yield f"data: {json.dumps({'status': {'step': 'generating', 'message': 'AI 正在构建大纲...', 'progress': 0.0}})}\n\n"
             try:
                 content = ''
@@ -471,29 +516,44 @@ class ProjectOutlineStreamingService:
                 structured_outline['metadata'] = {'generated_with_summeryfile': False, 'page_count_settings': page_count_settings, 'actual_page_count': actual_page_count, 'generated_at': time.time()}
                 project.outline = structured_outline
                 project.updated_at = time.time()
+                # A failed save must not be followed by a success event, or the user
+                # sees a finished outline that no longer exists after a reload.
                 try:
                     from ..db_project_manager import DatabaseProjectManager
                     db_manager = DatabaseProjectManager()
                     save_success = await db_manager.save_project_outline(project_id, project.outline)
-                    if save_success:
-                        logger.info(f'✅ Successfully saved outline to database during streaming for project {project_id}')
-                        projects_cache = getattr(self.project_manager, 'projects', None)
-                        if isinstance(projects_cache, dict):
-                            projects_cache[project_id] = project
-                    else:
-                        logger.error(f'❌ Failed to save outline to database during streaming for project {project_id}')
                 except Exception as save_error:
-                    logger.error(f'❌ Exception while saving outline during streaming: {str(save_error)}')
-                    import traceback
-                    traceback.print_exc()
+                    logger.error(f'❌ Exception while saving outline during streaming: {str(save_error)}', exc_info=True)
+                    save_success = False
+
+                if not save_success:
+                    logger.error(f'❌ Failed to save outline to database during streaming for project {project_id}')
+                    await self._mark_streaming_outline_failed(project_id, '大纲保存到数据库失败')
+                    yield f"data: {json.dumps({'error': '大纲已生成但保存失败，请重新生成大纲。'})}\n\n"
+                    return
+
+                logger.info(f'✅ Successfully saved outline to database during streaming for project {project_id}')
+                projects_cache = getattr(self.project_manager, 'projects', None)
+                if isinstance(projects_cache, dict):
+                    projects_cache[project_id] = project
+
                 await self._update_outline_generation_stage(project_id, structured_outline)
                 yield f"data: {json.dumps({'outline': structured_outline}, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'done': True, 'llm_call_count': 1})}\n\n"
                 return
             except Exception as parse_error:
-                logger.error(f'Failed to parse AI response as JSON: {parse_error}')
+                from .outline_errors import OutlineRepairFailedError
+
+                logger.error(f'Failed to build a valid outline: {parse_error}')
                 logger.error(f'AI response content: {content[:500]}...')
-                error_message = f'AI生成的大纲格式无效，无法解析。请重新生成大纲。'
+                if isinstance(parse_error, OutlineRepairFailedError):
+                    error_message = (
+                        'AI生成的大纲不符合要求且自动修复失败：'
+                        f"{'; '.join(parse_error.validation_errors)}。请重新生成大纲。"
+                    )
+                else:
+                    error_message = 'AI生成的大纲格式无效，无法解析。请重新生成大纲。'
+                await self._mark_streaming_outline_failed(project_id, error_message)
                 yield f"data: {json.dumps({'error': error_message})}\n\n"
                 return
         except Exception as e:

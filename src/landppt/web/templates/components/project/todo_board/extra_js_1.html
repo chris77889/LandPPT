@@ -3,6 +3,17 @@
     let lastOutlineErrorMessage = '';
     let lastOutlineErrorRetryHandler = 'regenerateOutlineNew';
 
+    // Outline text is model-generated and may echo content from an uploaded file
+    // or a fetched URL, so it is untrusted: escape before it reaches innerHTML.
+    function escapeHtml(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        const div = document.createElement('div');
+        div.textContent = String(value);
+        return div.innerHTML;
+    }
+
     let pendingOutlineData = null;
     const MAX_OUTLINE_RENDER_RETRIES = 5;
     const OUTLINE_STREAM_RECOVERY_POLL_INTERVAL_MS = 10000;
@@ -17,6 +28,58 @@
     const initialOutlineStageStatus = {{ (outline_stage.status if outline_stage else '') | tojson }};
     let outlineResumeAutoStartScheduled = false;
     let outlineHasGeneratedInSession = false;
+
+    // Handles for the in-flight outline stream so a new run (or leaving the page)
+    // can cancel it instead of leaving two streams writing to the same nodes.
+    let activeOutlineStreamController = null;
+    let activeOutlineStreamReader = null;
+
+    function abortActiveOutlineStream(reason) {
+        if (activeOutlineStreamReader) {
+            try {
+                activeOutlineStreamReader.cancel(reason);
+            } catch (error) {
+                console.debug('Outline stream reader cancel failed:', error);
+            }
+            activeOutlineStreamReader = null;
+        }
+        if (activeOutlineStreamController) {
+            try {
+                activeOutlineStreamController.abort(reason);
+            } catch (error) {
+                console.debug('Outline stream abort failed:', error);
+            }
+            activeOutlineStreamController = null;
+        }
+    }
+
+    function isOutlineStreamAbortError(error) {
+        return Boolean(error) && (error.name === 'AbortError' || error.code === 20);
+    }
+
+    // Exactly one document-level listener for the "回到最新" button, retargeted at
+    // each generation rather than added again.
+    let outlineStreamJumpListenerBound = false;
+    let currentOutlineStreamJumpToLatest = null;
+
+    function ensureOutlineStreamJumpListener() {
+        if (outlineStreamJumpListenerBound) {
+            return;
+        }
+        outlineStreamJumpListenerBound = true;
+        document.addEventListener('click', event => {
+            const button = event.target.closest('[data-outline-stream-jump-btn]');
+            if (!button) {
+                return;
+            }
+            event.preventDefault();
+            if (typeof currentOutlineStreamJumpToLatest === 'function') {
+                currentOutlineStreamJumpToLatest();
+            }
+        });
+    }
+
+    window.addEventListener('pagehide', () => abortActiveOutlineStream('page hidden'));
     const hasProjectLanguage = (
         projectMetadata &&
         typeof projectMetadata === 'object' &&
@@ -247,7 +310,7 @@
             errorDiv.innerHTML = `
             <i class="fas fa-exclamation-triangle fa-2x" style="margin-bottom: 12px;"></i>
             <p style="margin: 0 0 8px; font-weight: 600;">大纲生成失败</p>
-            <p class="outline-error-reason" style="margin: 0 0 12px; font-size: 14px; color: #7f8c8d;">原因：${lastOutlineErrorMessage}</p>
+            <p class="outline-error-reason" style="margin: 0 0 12px; font-size: 14px; color: #7f8c8d;">原因：${escapeHtml(lastOutlineErrorMessage)}</p>
             <button onclick="${handlerName}()" class="btn btn-outline-warning btn-sm">
                 <i class="fas fa-sync"></i> 重新生成大纲
             </button>
@@ -279,7 +342,7 @@
             <div style="color: #e74c3c; text-align: center; padding: 20px;">
                 <i class="fas fa-exclamation-triangle" style="font-size: 24px; margin-bottom: 10px;"></i>
                 <div style="margin-bottom: 15px;">大纲生成失败</div>
-                <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">原因：${lastOutlineErrorMessage}</div>
+                <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">原因：${escapeHtml(lastOutlineErrorMessage)}</div>
                 <button onclick="${handlerName}()" class="btn btn-outline-warning btn-sm">
                     <i class="fas fa-sync"></i> 重新生成大纲
                 </button>
@@ -586,6 +649,24 @@
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    // Yield to the browser between stream chunks. Resolves on whichever of rAF or
+    // the timeout fires first, so a hidden tab (where rAF is suspended) still makes
+    // progress instead of stalling the reader.
+    function yieldToRenderer(timeoutMs = 50) {
+        return new Promise(resolve => {
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                resolve();
+            };
+            if (!document.hidden && typeof window.requestAnimationFrame === 'function') {
+                window.requestAnimationFrame(finish);
+            }
+            setTimeout(finish, timeoutMs);
+        });
+    }
+
     function isOutlineStreamNetworkDisconnect(error) {
         const message = String(error && error.message ? error.message : error || '').toLowerCase();
         return (
@@ -605,7 +686,29 @@
         return null;
     }
 
-    async function fetchPersistedProjectOutline() {
+    // Identity of the outline that existed when the current run started. Recovery
+    // must not accept it as "the new result": regenerating does not clear the old
+    // outline server-side, so an immediate poll after a blip returned the PREVIOUS
+    // outline and the UI presented it as the finished regeneration.
+    let outlineSignatureAtGenerationStart = null;
+
+    function computeOutlineSignature(outline) {
+        if (!outline || !Array.isArray(outline.slides)) {
+            return null;
+        }
+        const titles = outline.slides.map(slide => String((slide && slide.title) || '')).join('|');
+        return [outline.slides.length, outline.title || '', titles].join('~');
+    }
+
+    function isOutlineFresherThanRunStart(outline) {
+        if (outlineSignatureAtGenerationStart === null) {
+            // Nothing existed beforehand, so anything persisted is new.
+            return true;
+        }
+        return computeOutlineSignature(outline) !== outlineSignatureAtGenerationStart;
+    }
+
+    async function fetchPersistedProjectOutline({ requireFresh = false } = {}) {
         const response = await fetch(`/api/projects/${currentProjectId}`, {
             cache: 'no-store',
             credentials: 'same-origin'
@@ -614,7 +717,14 @@
             return null;
         }
         const projectPayload = await response.json();
-        return extractProjectOutline(projectPayload);
+        const outline = extractProjectOutline(projectPayload);
+        if (!outline) {
+            return null;
+        }
+        if (requireFresh && !isOutlineFresherThanRunStart(outline)) {
+            return null;
+        }
+        return outline;
     }
 
     async function waitForPersistedProjectOutlineAfterDisconnect({ onPoll = null } = {}) {
@@ -628,7 +738,9 @@
             }
 
             try {
-                const outline = await fetchPersistedProjectOutline();
+                // requireFresh: reject the pre-existing outline, otherwise the very
+                // first poll "recovers" the previous version instantly.
+                const outline = await fetchPersistedProjectOutline({ requireFresh: true });
                 if (outline) {
                     return outline;
                 }
@@ -743,6 +855,19 @@
             if (shouldExposePPTStartButton()) {
                 showStartPPTButton();
             }
+            return true;
+        }
+
+        // No outline AND nothing will resume: showOutlineSection() has just enabled
+        // the loading skeleton and disabled the toolbar, so without this the page
+        // spins forever with no error and no retry (the `failed` stage case).
+        if (!shouldResumeOutlineGenerationOnLoad()) {
+            stopOutlineGenerationAnimations('no outline and no generation will resume');
+            setOutlineLoadingState(false);
+            const reason = initialOutlineStageStatus === 'failed'
+                ? '上次大纲生成失败，请重新生成大纲。'
+                : '尚未生成大纲，请点击下方按钮开始生成。';
+            showOutlineGenerationError(reason, 'regenerateOutlineNew');
         }
 
         return true;
@@ -1225,6 +1350,16 @@
         // 标记为已开始
         outlineGenerationStarted = true;
 
+        // Snapshot the outline that exists right now so disconnect recovery can tell
+        // a genuinely new result from the one this run is replacing.
+        try {
+            const existingOutline = getOutlineContentNew()
+                ? JSON.parse(getOutlineContentNew())
+                : initialProjectOutline;
+            outlineSignatureAtGenerationStart = computeOutlineSignature(existingOutline);
+        } catch (error) {
+            outlineSignatureAtGenerationStart = computeOutlineSignature(initialProjectOutline);
+        }
 
         if (currentViewNew === 'outline') {
             toggleOutlineViewDuringRegeneration(true);
@@ -1300,18 +1435,26 @@
             statusDiv.style.display = 'none';
         }
 
+        // Abort any stream still open from a previous run before starting a new
+        // one. Without this, two concurrent streams interleaved writes into the
+        // same preview nodes and the backend billed both.
+        abortActiveOutlineStream('superseded by a new generation');
+        const streamAbortController = new AbortController();
+        activeOutlineStreamController = streamAbortController;
+
         try {
             // 调用流式大纲生成接口（避免长时间请求导致 504）
             const streamUrl = forceRegenerate
                 ? `/projects/${currentProjectId}/outline-stream?force_regenerate=1`
                 : `/projects/${currentProjectId}/outline-stream`;
-            const response = await fetch(streamUrl);
+            const response = await fetch(streamUrl, { signal: streamAbortController.signal });
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const reader = response.body.getReader();
+            activeOutlineStreamReader = reader;
             const decoder = new TextDecoder();
             let outlineContent = '';
             let receivedDone = false;
@@ -1325,7 +1468,6 @@
             let streamedChunkCount = 0;
             let streamPreviewAutoStickToBottom = true;
             const streamPreviewBottomThreshold = 28;
-            let streamPreviewJumpBindingInitialized = false;
 
             function scrollOutlineStreamPreviewToBottom(node) {
                 if (!node) {
@@ -1380,20 +1522,13 @@
             }
 
             function bindOutlineStreamJumpButton() {
-                if (streamPreviewJumpBindingInitialized) {
-                    return;
-                }
-
-                streamPreviewJumpBindingInitialized = true;
-                document.addEventListener('click', event => {
-                    const button = event.target.closest('[data-outline-stream-jump-btn]');
-                    if (!button) {
-                        return;
-                    }
-
-                    event.preventDefault();
-                    jumpOutlineStreamPreviewToLatest();
-                });
+                // Point the single, module-level listener at THIS run's handler.
+                // The guard flag used to be function-local, so every generation
+                // added another document listener; during a later run the stale
+                // closures re-created a renderer on the live preview node and
+                // replayed the previous run's text over the current output.
+                currentOutlineStreamJumpToLatest = jumpOutlineStreamPreviewToLatest;
+                ensureOutlineStreamJumpListener();
             }
 
             function bindOutlineStreamPreviewInteractions(node) {
@@ -1512,6 +1647,11 @@
                     }
                 });
                 outlineStreamPreviewRenderers.clear();
+                // Drop this run's jump handler: with the renderers gone it would
+                // rebuild one on the live preview node and clobber it.
+                if (currentOutlineStreamJumpToLatest === jumpOutlineStreamPreviewToLatest) {
+                    currentOutlineStreamJumpToLatest = null;
+                }
             }
 
             function renderOutlineStreamPreview({ forceScroll = false, forceFullSync = false } = {}) {
@@ -1664,7 +1804,11 @@
 
                             streamedChunkCount += 1;
                             if (streamedChunkCount % 80 === 0) {
-                                await new Promise(resolve => requestAnimationFrame(() => resolve()));
+                                // Yield to the renderer, but never via rAF alone:
+                                // rAF is suspended in hidden tabs, so the promise
+                                // never settled and the reader stopped consuming the
+                                // stream until a proxy timed the connection out.
+                                await yieldToRenderer();
                             }
                         }
 
@@ -1738,6 +1882,19 @@
             // 重置标志，允许下次生成
             outlineGenerationStarted = false;
 
+            // `done` without a usable outline is a failure. Previously the code fell
+            // through and enabled "开始生成PPT" over an empty outline area, so the
+            // user could navigate to template selection with no outline at all.
+            if (!parsedOutline || !Array.isArray(parsedOutline.slides) || parsedOutline.slides.length === 0) {
+                hideStartPPTButton();
+                showOutlineGenerationError(
+                    '大纲生成已结束，但未收到有效的大纲内容，请重新生成大纲。',
+                    'regenerateOutlineNew'
+                );
+                if (cursorDiv) cursorDiv.style.display = 'none';
+                return;
+            }
+
             // Show action buttons
             const actionsDiv = document.getElementById('outline-actions');
             if (actionsDiv) {
@@ -1747,6 +1904,14 @@
             // Show start PPT generation button
             showStartPPTButton();
         } catch (error) {
+            // A deliberate abort (new run started, or page unloading) is not a
+            // failure and must not trigger the 30-minute recovery poll.
+            if (isOutlineStreamAbortError(error)) {
+                console.debug('Outline stream aborted:', error.message || error);
+                destroyOutlineStreamPreviewRenderers();
+                return;
+            }
+
             const isNetworkDisconnect = isOutlineStreamNetworkDisconnect(error);
 
             if (isNetworkDisconnect) {
@@ -1786,6 +1951,13 @@
             showOutlineGenerationError(errorMessage, 'regenerateOutlineNew');
             if (cursorDiv) cursorDiv.style.display = 'none';
             destroyOutlineStreamPreviewRenderers();
+        } finally {
+            // Release the handles only if this run still owns them; a newer run
+            // may already have replaced them.
+            if (activeOutlineStreamController === streamAbortController) {
+                activeOutlineStreamController = null;
+                activeOutlineStreamReader = null;
+            }
         }
     }
 
@@ -2163,6 +2335,14 @@
     // 重新生成大纲函数
     async function regenerateOutlineNew() {
 
+        // In-flight guard: without it a second click (or the JSON-view toggle
+        // exposing the button mid-stream) started a concurrent generation that
+        // interleaved output and was billed twice.
+        if (outlineGenerationStarted) {
+            Notify.warning('大纲正在生成中，请等待当前生成结束后再重新生成');
+            return;
+        }
+
         // 使用自定义弹窗让用户输入额外需求
         const customRequirements = await showCustomRequirementsModal();
 
@@ -2531,7 +2711,7 @@
                                 <div style="color: #e74c3c; text-align: center; padding: 20px;">
                                     <i class="fas fa-exclamation-triangle" style="font-size: 24px; margin-bottom: 10px;"></i>
                                     <div style="margin-bottom: 15px;">大纲生成失败</div>
-                                    <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">${data.error}</div>
+                                    <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">${escapeHtml(data.error)}</div>
                                     <button onclick="retryStreamingOutlineGeneration()" class="btn btn-outline-warning btn-sm">
                                         <i class="fas fa-sync"></i> 重新生成大纲
                                     </button>
@@ -2611,7 +2791,7 @@
             <div style="color: #e74c3c; text-align: center; padding: 20px;">
                 <i class="fas fa-exclamation-triangle" style="font-size: 24px; margin-bottom: 10px;"></i>
                 <div style="margin-bottom: 15px;">连接失败</div>
-                <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">连接错误: ${error.message}</div>
+                <div style="font-size: 14px; margin-bottom: 20px; color: #7f8c8d;">连接错误: ${escapeHtml(error.message)}</div>
                 <button onclick="retryStreamingOutlineGeneration()" class="btn btn-outline-warning btn-sm">
                     <i class="fas fa-sync"></i> 重新生成大纲
                 </button>
@@ -2908,104 +3088,79 @@
 
     // Subtask management functions removed - now using complete stage execution
 
-    // Real-time updates
-    setInterval(async function () {
+    // Stage-status sync.
+    //
+    // This used to be an unconditional `setInterval(..., 3000)` that never
+    // cleared, had no error backoff, and updated DOM nodes this page does not
+    // render (`.overall-progress-bar`, `[data-stage-id]`, `#connection-error`).
+    // The result was a permanent 0.33 req/s load per open tab with no visible
+    // effect. Only the "start PPT" button actually needs syncing, so poll for
+    // that alone, pause while the tab is hidden, and back off on errors.
+    const STAGE_SYNC_INTERVAL_MS = 15000;
+    const STAGE_SYNC_MAX_BACKOFF_MS = 120000;
+    let stageSyncTimer = null;
+    let stageSyncBackoffMs = STAGE_SYNC_INTERVAL_MS;
+    let stageSyncStopped = false;
+
+    function scheduleStageSync(delayMs) {
+        if (stageSyncStopped) return;
+        if (stageSyncTimer) clearTimeout(stageSyncTimer);
+        stageSyncTimer = setTimeout(runStageSync, delayMs);
+    }
+
+    function stopStageSync() {
+        stageSyncStopped = true;
+        if (stageSyncTimer) {
+            clearTimeout(stageSyncTimer);
+            stageSyncTimer = null;
+        }
+    }
+
+    async function runStageSync() {
+        if (document.hidden) {
+            // Nothing to show while hidden; retry once visible again.
+            scheduleStageSync(STAGE_SYNC_INTERVAL_MS);
+            return;
+        }
+
         try {
             const response = await fetch(`/api/projects/${currentProjectId}/todo`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
             const todoData = await response.json();
+            stageSyncBackoffMs = STAGE_SYNC_INTERVAL_MS;
 
-            // Update overall progress
-            const progressBar = document.querySelector('.overall-progress-bar');
-            const progressText = document.querySelector('.overall-progress-text');
-            const progressDetails = document.querySelector('.progress-details');
+            const pptStage = Array.isArray(todoData.stages)
+                ? todoData.stages.find(stage => stage && stage.id === 'ppt_creation')
+                : null;
 
-            if (progressBar && progressText && todoData.overall_progress !== undefined) {
-                progressBar.style.width = todoData.overall_progress + '%';
-                progressText.textContent = `总体进度: ${todoData.overall_progress.toFixed(1)}%`;
+            if (pptStage) {
+                if (shouldExposePPTStartButton(pptStage.status)) {
+                    showStartPPTButton();
+                } else {
+                    hideStartPPTButton();
+                }
             }
 
-            if (progressDetails && todoData.stages && Array.isArray(todoData.stages)) {
-                const completedStages = todoData.stages.filter(s => s.status === 'completed').length;
-                progressDetails.textContent = `已完成 ${completedStages} / ${todoData.stages.length} 个阶段`;
-            }
-
-            // Hide connection error if update is successful
-            const errorElement = document.getElementById('connection-error');
-            if (errorElement) {
-                errorElement.style.display = 'none';
-            }
-
-            // Update stage indicators
-            if (todoData.stages && Array.isArray(todoData.stages)) {
-                todoData.stages.forEach(stage => {
-                    const stageElement = document.querySelector(`[data-stage-id="${stage.id}"]`);
-                    if (stageElement) {
-                        const icon = stageElement.querySelector('.stage-status-icon');
-                        const progressBar = stageElement.querySelector('.stage-progress-bar');
-                        const progressText = stageElement.querySelector('.stage-progress-text');
-                        const taskStatus = stageElement.querySelector('.task-status');
-
-                        // Update status icon
-                        if (stage.status === 'completed') {
-                            icon.textContent = '✓';
-                            icon.parentElement.style.background = '#27ae60';
-                            if (taskStatus) taskStatus.textContent = '✓';
-
-                            // Auto-start outline generation when requirements confirmation is completed
-                            if (stage.id === 'requirements_confirmation') {
-                                const outlineStage = document.querySelector('[data-stage-id="outline_generation"]');
-                                const outlineStatus = outlineStage?.querySelector('.stage-status-icon')?.textContent;
-                                if (outlineStatus === '⏳') {
-                                    setTimeout(() => {
-                                        startStageExecution('outline_generation');
-                                    }, 2000); // Wait 2 seconds for UI to update
-                                }
-                            }
-                        } else if (stage.status === 'running') {
-                            icon.innerHTML = '<div style="width: 16px; height: 16px; border: 2px solid white; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>';
-                            icon.parentElement.style.background = '#111111';
-                            if (taskStatus) taskStatus.textContent = '🔄';
-
-                            // Show editor button for PPT creation stage when it starts running
-                            if (stage.id === 'ppt_creation') {
-                                const editorBtn = document.getElementById(`editor-btn-${stage.id}`);
-                                if (editorBtn) {
-                                    editorBtn.style.display = 'inline-block';
-                                }
-                            }
-                        } else if (stage.status === 'failed') {
-                            icon.textContent = '✗';
-                            icon.parentElement.style.background = '#e74c3c';
-                            if (taskStatus) taskStatus.textContent = '✕';
-                        }
-
-                        // Update progress bar
-                        if (progressBar && progressText && stage.status === 'running') {
-                            progressBar.style.width = stage.progress + '%';
-                            progressText.textContent = stage.progress.toFixed(1) + '%';
-                        }
-
-                        if (stage.id === 'ppt_creation') {
-                            if (shouldExposePPTStartButton(stage.status)) {
-                                showStartPPTButton();
-                            } else {
-                                hideStartPPTButton();
-                            }
-                        }
-                    }
-                });
-            }
-
+            scheduleStageSync(STAGE_SYNC_INTERVAL_MS);
         } catch (error) {
-            console.error('Error updating TODO board:', error);
-            // Show connection error message
-            const errorElement = document.getElementById('connection-error');
-            if (errorElement) {
-                errorElement.style.display = 'block';
-                errorElement.textContent = '连接错误，请刷新页面重试';
-            }
+            console.error('Error syncing stage status:', error);
+            stageSyncBackoffMs = Math.min(stageSyncBackoffMs * 2, STAGE_SYNC_MAX_BACKOFF_MS);
+            scheduleStageSync(stageSyncBackoffMs);
         }
-    }, 3000); // Update every 3 seconds
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && !stageSyncStopped) {
+            scheduleStageSync(0);
+        }
+    });
+
+    window.addEventListener('pagehide', stopStageSync);
+    window.addEventListener('beforeunload', stopStageSync);
+
+    scheduleStageSync(STAGE_SYNC_INTERVAL_MS);
 
     // Modal functionality removed - using direct stage execution
 
@@ -3281,15 +3436,21 @@
         if (!outlineDisplay) return null;
 
         const preElement = outlineDisplay.querySelector('pre');
+        let content;
         if (preElement) {
-            let content = preElement.textContent || preElement.innerText || '';
-            return content.trim();
+            content = (preElement.textContent || preElement.innerText || '').trim();
+        } else {
+            // 如果没有pre元素，从整个div获取内容并处理HTML实体
+            content = (outlineDisplay.textContent || outlineDisplay.innerText || '')
+                .replace(/&nbsp;/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
         }
 
-        // 如果没有pre元素，从整个div获取内容并处理HTML实体
-        let content = outlineDisplay.textContent || outlineDisplay.innerText || '';
-        content = content.replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
-        return content.trim();
+        // Same placeholder guard as getOutlineContentNew. Without it, opening
+        // "编辑大纲" mid-generation loaded the loading-screen text into the JSON
+        // editor as though it were the outline.
+        return looksLikePlaceholderOutlineText(content) ? null : content;
     }
 
 
@@ -3368,13 +3529,13 @@
             slideCard.innerHTML = `
             <div style="display: flex; align-items: center; margin-bottom: 8px;">
                 <span style="background: #111; color: #fff; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: bold; margin-right: 10px;">
-                    ${slide.page_number || index + 1}
+                    ${escapeHtml(slide.page_number || index + 1)}
                 </span>
-                <strong style="color: #111; font-size: 0.9em;">${slide.title || '未命名幻灯片'}</strong>
+                <strong style="color: #111; font-size: 0.9em;">${escapeHtml(slide.title) || '未命名幻灯片'}</strong>
             </div>
-            ${slide.subtitle ? `<p style="color: #555; font-size: 0.8em; margin: 5px 0; font-style: italic;">${slide.subtitle}</p>` : ''}
+            ${slide.subtitle ? `<p style="color: #555; font-size: 0.8em; margin: 5px 0; font-style: italic;">${escapeHtml(slide.subtitle)}</p>` : ''}
             <div style="color: #444; font-size: 0.8em; line-height: 1.4;">
-                ${firstPoint ? (typeof firstPoint === 'string' ? firstPoint.substring(0, 80) + (firstPoint.length > 80 ? '...' : '') : JSON.stringify(firstPoint).substring(0, 80) + '...') : '<span style="color: #888;">暂无内容</span>'}
+                ${firstPoint ? escapeHtml(typeof firstPoint === 'string' ? firstPoint.substring(0, 80) + (firstPoint.length > 80 ? '...' : '') : JSON.stringify(firstPoint).substring(0, 80) + '...') : '<span style="color: #888;">暂无内容</span>'}
                 ${remainingCount > 0 ? `<br><span style="color: #888;">+${remainingCount} 个要点</span>` : ''}
             </div>
         `;
@@ -3406,7 +3567,7 @@
                 <div style="margin-top: 10px;">
                     <h5 style="color: #555; margin-bottom: 8px; font-size: 0.9em;">内容要点：</h5>
                     <ul style="margin: 0; padding-left: 20px; color: #555; line-height: 1.6;">
-                        ${contentPoints.map(point => `<li style="margin-bottom: 5px;">${point}</li>`).join('')}
+                        ${contentPoints.map(point => `<li style="margin-bottom: 5px;">${escapeHtml(point)}</li>`).join('')}
                     </ul>
                 </div>
             `;
@@ -3414,7 +3575,7 @@
                 contentHtml = `
                 <div style="margin-top: 10px;">
                     <h5 style="color: #555; margin-bottom: 8px; font-size: 0.9em;">内容：</h5>
-                    <div style="background: white; padding: 15px; border-radius: 6px; color: #555; line-height: 1.6; white-space: pre-wrap;">${contentPoints}</div>
+                    <div style="background: white; padding: 15px; border-radius: 6px; color: #555; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(contentPoints)}</div>
                 </div>
             `;
             }
@@ -3422,15 +3583,15 @@
             slideDiv.innerHTML = `
             <div style="display: flex; align-items: center; margin-bottom: 15px;">
                 <span style="background: #111; color: #fff; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 15px;">
-                    ${slide.page_number || index + 1}
+                    ${escapeHtml(slide.page_number || index + 1)}
                 </span>
                 <div style="flex: 1;">
-                    <strong style="color: #111; font-size: 1.1em;">${slide.title || '未命名幻灯片'}</strong>
-                    ${slide.subtitle ? `<br><em style="color: #555; font-size: 0.9em;">${slide.subtitle}</em>` : ''}
+                    <strong style="color: #111; font-size: 1.1em;">${escapeHtml(slide.title) || '未命名幻灯片'}</strong>
+                    ${slide.subtitle ? `<br><em style="color: #555; font-size: 0.9em;">${escapeHtml(slide.subtitle)}</em>` : ''}
                 </div>
             </div>
             ${contentHtml}
-            ${slide.slide_type ? `<div style="margin-top: 10px;"><span style="background: #f5f5f5; color: #111; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">类型: ${slide.slide_type}</span></div>` : ''}
+            ${slide.slide_type ? `<div style="margin-top: 10px;"><span style="background: #f5f5f5; color: #111; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">类型: ${escapeHtml(slide.slide_type)}</span></div>` : ''}
         `;
 
             container.appendChild(slideDiv);
@@ -3465,25 +3626,25 @@
             contentHtml = `
             <h5 style="color: #555; margin: 15px 0 8px 0;">内容要点：</h5>
             <ul style="margin: 0; padding-left: 20px; color: #555; line-height: 1.6;">
-                ${contentPoints.map(point => `<li style="margin-bottom: 5px;">${point}</li>`).join('')}
+                ${contentPoints.map(point => `<li style="margin-bottom: 5px;">${escapeHtml(point)}</li>`).join('')}
             </ul>
         `;
         } else if (contentPoints) {
             contentHtml = `
             <h5 style="color: #555; margin: 15px 0 8px 0;">内容：</h5>
-            <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; color: #555; line-height: 1.6; white-space: pre-wrap;">${contentPoints}</div>
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; color: #555; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(contentPoints)}</div>
         `;
         }
 
         content.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h3 style="color: #111; margin: 0;">第${slide.page_number || slideIndex + 1}页详情</h3>
+            <h3 style="color: #111; margin: 0;">第${escapeHtml(slide.page_number || slideIndex + 1)}页详情</h3>
             <button onclick="this.closest('.modal').remove()" style="background: transparent; color: #111; border: 1px solid #111; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;">×</button>
         </div>
-        <h4 style="color: #111; margin-bottom: 10px;">${slide.title || '未命名幻灯片'}</h4>
-        ${slide.subtitle ? `<p style="color: #555; font-style: italic; margin-bottom: 15px;">${slide.subtitle}</p>` : ''}
+        <h4 style="color: #111; margin-bottom: 10px;">${escapeHtml(slide.title) || '未命名幻灯片'}</h4>
+        ${slide.subtitle ? `<p style="color: #555; font-style: italic; margin-bottom: 15px;">${escapeHtml(slide.subtitle)}</p>` : ''}
         ${contentHtml}
-        ${slide.slide_type ? `<div style="margin-top: 15px;"><span style="background: #f5f5f5; color: #111; padding: 6px 12px; border-radius: 6px; font-size: 0.9em;">类型: ${slide.slide_type}</span></div>` : ''}
+        ${slide.slide_type ? `<div style="margin-top: 15px;"><span style="background: #f5f5f5; color: #111; padding: 6px 12px; border-radius: 6px; font-size: 0.9em;">类型: ${escapeHtml(slide.slide_type)}</span></div>` : ''}
     `;
 
         modal.className = 'modal';
@@ -3802,11 +3963,14 @@
             jsonView.style.display = 'block';
             outlineView.style.display = 'none';
 
-            toggleOutlineViewDuringRegeneration(false);
-
-            // Show action buttons in JSON view
-            if (actionsDiv) {
-                actionsDiv.style.display = 'block';
+            // While a stream is running, keep the regeneration dimming and keep the
+            // action buttons hidden. Un-dimming here exposed "重新生成大纲" mid-stream,
+            // and clicking it started a second concurrent generation.
+            if (!outlineGenerationStarted) {
+                toggleOutlineViewDuringRegeneration(false);
+                if (actionsDiv) {
+                    actionsDiv.style.display = 'block';
+                }
             }
 
             // Update button styles
@@ -3878,7 +4042,7 @@
                 errorDiv.innerHTML = `
                 <i class="fas fa-exclamation-triangle fa-2x" style="margin-bottom: 12px;"></i>
                 <p style="margin: 0 0 8px; font-weight: 600;">大纲生成失败</p>
-                <p class="outline-error-reason" style="margin: 0 0 12px; font-size: 14px; color: #7f8c8d;">原因：${lastOutlineErrorMessage}</p>
+                <p class="outline-error-reason" style="margin: 0 0 12px; font-size: 14px; color: #7f8c8d;">原因：${escapeHtml(lastOutlineErrorMessage)}</p>
                 <button onclick="${handlerName}()" class="btn btn-outline-warning btn-sm">
                     <i class="fas fa-sync"></i> 重新生成大纲
                 </button>
@@ -4015,10 +4179,10 @@
         const titleSection = document.createElement('div');
         titleSection.style.cssText = 'text-align: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #ecf0f1;';
         titleSection.innerHTML = `
-        <h4 style="color: #111111; font-size: 1.5em; font-weight: bold; margin-bottom: 10px;">${outline.title || '未命名大纲'}</h4>
+        <h4 style="color: #111111; font-size: 1.5em; font-weight: bold; margin-bottom: 10px;">${escapeHtml(outline.title) || '未命名大纲'}</h4>
         <p style="color: #7f8c8d; margin: 0;">
             总共 ${outline.slides.length} 页幻灯片 |
-            场景: ${outline.metadata?.scenario || '未指定'} |
+            场景: ${escapeHtml(outline.metadata?.scenario) || '未指定'} |
             语言: ${getLanguageDisplayName(getOutlineLanguageCode(outline))}
         </p>
     `;
@@ -4085,28 +4249,29 @@
             <span style="background: #111111; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: bold; margin-right: 10px;">
                 ${slide.page_number || index + 1}
             </span>
-            <strong style="color: #2c3e50; font-size: 0.9em;">${slide.title || '未命名幻灯片'}</strong>
+            <strong style="color: #2c3e50; font-size: 0.9em;">${escapeHtml(slide.title) || '未命名幻灯片'}</strong>
         `;
 
             const subtitle = document.createElement('div');
             if (slide.subtitle) {
-                subtitle.innerHTML = `<p style="color: #7f8c8d; font-size: 0.8em; margin: 5px 0; font-style: italic;">${slide.subtitle}</p>`;
+                subtitle.innerHTML = `<p style="color: #7f8c8d; font-size: 0.8em; margin: 5px 0; font-style: italic;">${escapeHtml(slide.subtitle)}</p>`;
             }
 
             const content = document.createElement('div');
             content.style.cssText = 'color: #666; font-size: 0.8em; line-height: 1.4;';
 
             if (slide.content_points && slide.content_points.length > 0) {
-                const firstPoint = slide.content_points[0];
+                const firstPoint = String(slide.content_points[0] ?? '');
                 const truncatedPoint = firstPoint.length > 80 ? firstPoint.substring(0, 80) + '...' : firstPoint;
-                content.innerHTML = truncatedPoint;
+                content.innerHTML = escapeHtml(truncatedPoint);
 
                 if (slide.content_points.length > 1) {
                     content.innerHTML += `<br><span style="color: #95a5a6;">+${slide.content_points.length - 1} 个要点</span>`;
                 }
             } else if (slide.content) {
-                const truncatedContent = slide.content.length > 80 ? slide.content.substring(0, 80) + '...' : slide.content;
-                content.innerHTML = truncatedContent;
+                const slideContent = String(slide.content);
+                const truncatedContent = slideContent.length > 80 ? slideContent.substring(0, 80) + '...' : slideContent;
+                content.innerHTML = escapeHtml(truncatedContent);
             } else {
                 content.innerHTML = '<span style="color: #95a5a6;">暂无内容</span>';
             }
@@ -4142,8 +4307,8 @@
                 ${slide.page_number || index + 1}
             </span>
             <div style="flex: 1;">
-                <strong style="color: #2c3e50; font-size: 1.1em;">${slide.title || '未命名幻灯片'}</strong>
-                ${slide.subtitle ? `<br><em style="color: #7f8c8d; font-size: 0.9em;">${slide.subtitle}</em>` : ''}
+                <strong style="color: #2c3e50; font-size: 1.1em;">${escapeHtml(slide.title) || '未命名幻灯片'}</strong>
+                ${slide.subtitle ? `<br><em style="color: #7f8c8d; font-size: 0.9em;">${escapeHtml(slide.subtitle)}</em>` : ''}
             </div>
             <button onclick="editSingleSlideNew(${index})" class="btn btn-primary" style="font-size: 0.8em; padding: 6px 12px;" title="编辑此页">
                 <i class="fas fa-edit"></i> 编辑
@@ -4174,7 +4339,7 @@
                 contentDiv.style.cssText = 'margin-top: 10px;';
                 contentDiv.innerHTML = `
                 <h5 style="color: #555; margin-bottom: 8px; font-size: 0.9em;">内容：</h5>
-                <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; color: #555; line-height: 1.6; white-space: pre-wrap;">${slide.content}</div>
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; color: #555; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(slide.content)}</div>
             `;
                 contentSection.appendChild(contentDiv);
             }
@@ -4184,7 +4349,7 @@
                 typeTag.style.cssText = 'margin-top: 10px;';
                 typeTag.innerHTML = `
                 <span style="background: #e8f4fd; color: #111111; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">
-                    类型: ${slide.slide_type}
+                    类型: ${escapeHtml(slide.slide_type)}
                 </span>
             `;
                 contentSection.appendChild(typeTag);
@@ -4228,22 +4393,22 @@
             if (slide.content_points && slide.content_points.length > 0) {
                 contentPoints = '<h5 style="color: #555; margin: 15px 0 8px 0;">内容要点：</h5><ul style="margin: 0; padding-left: 20px; color: #555; line-height: 1.6;">';
                 slide.content_points.forEach(point => {
-                    contentPoints += `<li style="margin-bottom: 5px;">${point}</li>`;
+                    contentPoints += `<li style="margin-bottom: 5px;">${escapeHtml(point)}</li>`;
                 });
                 contentPoints += '</ul>';
             } else if (slide.content) {
-                contentPoints = `<h5 style="color: #555; margin: 15px 0 8px 0;">内容：</h5><div style="background: #f8f9fa; padding: 15px; border-radius: 6px; color: #555; line-height: 1.6; white-space: pre-wrap;">${slide.content}</div>`;
+                contentPoints = `<h5 style="color: #555; margin: 15px 0 8px 0;">内容：</h5><div style="background: #f8f9fa; padding: 15px; border-radius: 6px; color: #555; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(slide.content)}</div>`;
             }
 
             content.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3 style="color: #2c3e50; margin: 0;">第${slide.page_number || slideIndex + 1}页详情</h3>
+                <h3 style="color: #2c3e50; margin: 0;">第${escapeHtml(slide.page_number || slideIndex + 1)}页详情</h3>
                 <button onclick="this.closest('.modal').remove()" style="background: transparent; color: #111; border: 1px solid #111; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;">×</button>
             </div>
-            <h4 style="color: #111111; margin-bottom: 10px;">${slide.title || '未命名幻灯片'}</h4>
-            ${slide.subtitle ? `<p style="color: #7f8c8d; font-style: italic; margin-bottom: 15px;">${slide.subtitle}</p>` : ''}
+            <h4 style="color: #111111; margin-bottom: 10px;">${escapeHtml(slide.title) || '未命名幻灯片'}</h4>
+            ${slide.subtitle ? `<p style="color: #7f8c8d; font-style: italic; margin-bottom: 15px;">${escapeHtml(slide.subtitle)}</p>` : ''}
             ${contentPoints}
-            ${slide.slide_type ? `<div style="margin-top: 15px;"><span style="background: #111111; color: white; padding: 6px 12px; border-radius: 6px; font-size: 0.9em;">类型: ${slide.slide_type}</span></div>` : ''}
+            ${slide.slide_type ? `<div style="margin-top: 15px;"><span style="background: #111111; color: white; padding: 6px 12px; border-radius: 6px; font-size: 0.9em;">类型: ${escapeHtml(slide.slide_type)}</span></div>` : ''}
         `;
 
             modal.className = 'modal';
@@ -4291,7 +4456,7 @@
             <button onclick="this.closest('.modal').remove()" style="background: transparent; color: #111; border: 1px solid #111; border-radius: 50%; width: 32px; height: 32px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;">×</button>
         </div>
         <div style="flex: 1; display: flex; flex-direction: column;">
-            <textarea id="outlineEditorNew" style="flex: 1; border: 2px solid #d9d9d9; border-radius: 8px; padding: 15px; font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.5; resize: none; background: #fff; color: #111;" placeholder="编辑大纲JSON...">${outlineContent}</textarea>
+            <textarea id="outlineEditorNew" style="flex: 1; border: 2px solid #d9d9d9; border-radius: 8px; padding: 15px; font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.5; resize: none; background: #fff; color: #111;" placeholder="编辑大纲JSON...">${escapeHtml(outlineContent)}</textarea>
             <div style="display: flex; gap: 8px; margin-top: 15px; justify-content: space-between;">
                 <button onclick="aiOptimizeJSONOutlineInModal()" class="btn btn-sm" style="background: #111; color: #fff; border: 1px solid #111;">
                     <i class="fas fa-magic"></i> 优化大纲
@@ -4442,7 +4607,7 @@
                     contentPointsHtml += `
                     <div class="content-point-item" data-point-index="${index}" style="display: flex; align-items: center; margin-bottom: 10px;">
                         <input type="text" class="content-point-input" data-index="${index}"
-                               value="${point.replace(/"/g, '&quot;')}"
+                               value="${escapeHtml(point)}"
                                style="flex: 1; padding: 8px 12px; border: 2px solid #d9d9d9; border-radius: 6px; font-size: 14px; background: #fff; color: #111;">
                         <button type="button" class="remove-point-btn" data-remove-index="${index}"
                                 style="background: #fff; color: #111; border: 1px solid #111; border-radius: 4px; padding: 6px 10px; margin-left: 8px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
@@ -4455,7 +4620,7 @@
 
             content.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
-                <h3 style="color: #111; margin: 0;">编辑第${slide.page_number || slideIndex + 1}页</h3>
+                <h3 style="color: #111; margin: 0;">编辑第${escapeHtml(slide.page_number || slideIndex + 1)}页</h3>
                 <button onclick="this.closest('.modal').remove()"
                         style="background: transparent; color: #111; border: 1px solid #111; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;">×</button>
             </div>
@@ -4464,14 +4629,14 @@
                 <!-- 页面标题 -->
                 <div>
                     <label style="display: block; color: #111; font-weight: bold; margin-bottom: 8px;">页面标题</label>
-                    <input type="text" id="slideTitle" value="${(slide.title || '').replace(/"/g, '&quot;')}"
+                    <input type="text" id="slideTitle" value="${escapeHtml(slide.title || '')}"
                            style="width: 100%; padding: 12px; border: 2px solid #d9d9d9; border-radius: 8px; font-size: 16px; background: #fff; color: #111;">
                 </div>
 
                 <!-- 页面副标题 -->
                 <div>
                     <label style="display: block; color: #111; font-weight: bold; margin-bottom: 8px;">副标题（可选）</label>
-                    <input type="text" id="slideSubtitle" value="${(slide.subtitle || '').replace(/"/g, '&quot;')}"
+                    <input type="text" id="slideSubtitle" value="${escapeHtml(slide.subtitle || '')}"
                            style="width: 100%; padding: 12px; border: 2px solid #d9d9d9; border-radius: 8px; font-size: 14px; background: #fff; color: #111;">
                 </div>
 
@@ -4502,7 +4667,7 @@
                 <div>
                     <label style="display: block; color: #111; font-weight: bold; margin-bottom: 8px;">页面描述（可选）</label>
                     <textarea id="slideDescription" rows="3"
-                              style="width: 100%; padding: 12px; border: 2px solid #d9d9d9; border-radius: 8px; font-size: 14px; resize: vertical; background: #fff; color: #111;">${slide.description || ''}</textarea>
+                              style="width: 100%; padding: 12px; border: 2px solid #d9d9d9; border-radius: 8px; font-size: 14px; resize: vertical; background: #fff; color: #111;">${escapeHtml(slide.description || '')}</textarea>
                 </div>
 
                 <!-- 操作按钮 -->
@@ -4658,28 +4823,35 @@
 
             // 获取当前大纲
             const outlineContent = getOutlineContentNew();
+            if (!outlineContent) {
+                Notify.error('大纲数据不存在，无法保存');
+                return;
+            }
             const parsedOutline = JSON.parse(outlineContent);
+            const originalSlide = parsedOutline.slides[slideIndex] || {};
 
-            // 更新指定的幻灯片
+            // Start from the existing slide so fields this form does not expose
+            // (a `content` body, backend-added keys, chart_config, ...) survive.
+            // Rebuilding from a fixed whitelist silently deleted them.
             const updatedSlide = {
-                page_number: parsedOutline.slides[slideIndex].page_number || slideIndex + 1,
+                ...originalSlide,
+                page_number: originalSlide.page_number || slideIndex + 1,
                 title: title,
                 content_points: contentPoints,
                 slide_type: slideType,
                 type: slideType // 保持兼容性
             };
 
-            // 添加可选字段
+            // 可选字段：留空表示删除
             if (subtitle) {
                 updatedSlide.subtitle = subtitle;
+            } else {
+                delete updatedSlide.subtitle;
             }
             if (description) {
                 updatedSlide.description = description;
-            }
-
-            // 保留原有的图表配置（如果存在）
-            if (parsedOutline.slides[slideIndex].chart_config) {
-                updatedSlide.chart_config = parsedOutline.slides[slideIndex].chart_config;
+            } else {
+                delete updatedSlide.description;
             }
 
             // 更新大纲
@@ -4766,15 +4938,7 @@
         const preElement = contentDiv.querySelector('pre');
         if (preElement) {
             let content = preElement.textContent || preElement.innerText || '';
-
-            if (content.includes('正在生成大纲') || content.includes('等待大纲生成') ||
-                content.includes('AI正在生成') || content.includes('正在解析') ||
-                content.includes('正在从文件生成') || content.includes('小贴士') ||
-                content.length < 50) { // 太短的内容可能是占位符
-                return null;
-            }
-
-            return content;
+            return looksLikePlaceholderOutlineText(content) ? null : content;
         }
 
         // 如果没有pre元素，尝试从整个div获取内容
@@ -4790,15 +4954,36 @@
             .replace(/\s+/g, ' ')
             .trim();
 
-        // Remove placeholder text - 扩展检查
-        if (content.includes('正在生成大纲') || content.includes('等待大纲生成') ||
-            content.includes('AI正在生成') || content.includes('正在解析') ||
-            content.includes('正在从文件生成') || content.includes('小贴士') ||
-            content.length < 50) { // 太短的内容可能是占位符
-            return null;
+        return looksLikePlaceholderOutlineText(content) ? null : content;
+    }
+
+    // Decide whether the JSON pane currently holds a loading placeholder rather than
+    // an outline. Structure comes first: a real outline that happens to contain a
+    // phrase like "小贴士" or "正在解析" in its own content used to be rejected,
+    // which broke 编辑此页 / 保存 / AI优化 with "大纲数据不存在".
+    function looksLikePlaceholderOutlineText(content) {
+        const text = (content || '').trim();
+        if (!text) {
+            return true;
         }
 
-        return content;
+        try {
+            const parsed = JSON.parse(text);
+            if (parsed && Array.isArray(parsed.slides)) {
+                return false;
+            }
+        } catch (error) {
+            // Not JSON: fall through to the textual heuristic below.
+        }
+
+        if (text.length < 50) {
+            return true;
+        }
+
+        const placeholderPhrases = [
+            '正在生成大纲', '等待大纲生成', 'AI正在生成', '正在解析', '正在从文件生成'
+        ];
+        return placeholderPhrases.some(phrase => text.includes(phrase));
     }
 
     // 调试大纲内容的函数
@@ -5059,7 +5244,7 @@
             html += `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: #f8f9fa; border-radius: 4px; margin-bottom: 5px; border-left: 3px solid #111111;">
                 <div style="flex: 1;">
-                    <div style="font-weight: 500; color: #2c3e50;">${i + 1}. ${file.name}</div>
+                    <div style="font-weight: 500; color: #2c3e50;">${i + 1}. ${escapeHtml(file.name)}</div>
                     <div style="font-size: 12px; color: #7f8c8d;">
                         <span>${fileExt.toUpperCase()}</span> |
                         <span>${sizeInMB} MB</span>
@@ -5386,7 +5571,7 @@
             userRequest = await showAIOptimizeModal({
                 title: `AI优化 - 第${slideIndex + 1}页`,
                 subtitle: '让AI帮助您优化这一页的内容',
-                currentInfo: `<strong>标题：</strong>${title}<br>${subtitle ? `<strong>副标题：</strong>${subtitle}<br>` : ''}<strong>类型：</strong>${slideType}<br><strong>内容要点：</strong>${contentPoints.length}个`,
+                currentInfo: `<strong>标题：</strong>${escapeHtml(title)}<br>${subtitle ? `<strong>副标题：</strong>${escapeHtml(subtitle)}<br>` : ''}<strong>类型：</strong>${escapeHtml(slideType)}<br><strong>内容要点：</strong>${contentPoints.length}个`,
                 suggestions: [
                     '增加更多技术细节和实例',
                     '简化内容，突出核心要点',
@@ -5465,7 +5650,7 @@
                             pointDiv.style.cssText = 'display: flex; align-items: center; margin-bottom: 10px;';
                             pointDiv.innerHTML = `
                             <input type="text" class="content-point-input" data-index="${idx}"
-                                   value="${point.replace(/"/g, '&quot;')}"
+                                   value="${escapeHtml(point)}"
                                    style="flex: 1; padding: 8px 12px; border: 2px solid #ecf0f1; border-radius: 6px; font-size: 14px;">
                             <button class="remove-point-btn" data-remove-index="${idx}"
                                     style="background: #e74c3c; color: white; border: none; border-radius: 4px; padding: 6px 10px; margin-left: 8px; cursor: pointer;">
@@ -5545,7 +5730,7 @@
             userRequest = await showAIOptimizeModal({
                 title: '优化大纲',
                 subtitle: '让AI帮助您优化整个PPT大纲结构和内容',
-                currentInfo: `<strong>大纲标题：</strong>${parsedOutline.title}<br><strong>幻灯片数量：</strong>${parsedOutline.slides ? parsedOutline.slides.length : 0} 页<br><strong>场景：</strong>${parsedOutline.metadata?.scenario || '通用'}`,
+                currentInfo: `<strong>大纲标题：</strong>${escapeHtml(parsedOutline.title)}<br><strong>幻灯片数量：</strong>${parsedOutline.slides ? parsedOutline.slides.length : 0} 页<br><strong>场景：</strong>${escapeHtml(parsedOutline.metadata?.scenario) || '通用'}`,
                 suggestions: [
                     '增加更多文字说明',
                     '重新组织结构，优化逻辑流程',

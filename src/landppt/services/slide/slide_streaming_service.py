@@ -282,7 +282,10 @@ class SlideStreamingService:
                     renew_task.cancel()
                     try:
                         await renew_task
-                    except Exception:
+                    except (asyncio.CancelledError, Exception):
+                        # CancelledError is a BaseException: it must be listed
+                        # explicitly, otherwise it escapes and the lock below
+                        # is never released.
                         pass
 
                 self._active_slide_generations[project_id] = False
@@ -394,10 +397,17 @@ class SlideStreamingService:
                 from ..db_project_manager import DatabaseProjectManager
                 db_manager = DatabaseProjectManager()
                 existing_slides = await db_manager.list_slides(project_id)
+                # Slides flagged by a failed run hold an error div; they still need
+                # generating, so they must not count towards completeness.
                 existing_indices = {
                     int(s.get("page_number", 0)) - 1
                     for s in existing_slides
-                    if s and s.get("html_content") and int(s.get("page_number", 0)) > 0
+                    if s
+                    and s.get("html_content")
+                    and int(s.get("page_number", 0)) > 0
+                    and not (
+                        s.get("generation_failed") and not s.get("is_user_edited")
+                    )
                 }
                 needs_generation = len(existing_indices) < total_slides
             except Exception:
@@ -521,14 +531,33 @@ class SlideStreamingService:
                 if not project or not project.outline:
                     return None
 
-                if slide_index >= len(project.outline.slides):
+                # PPTProject.outline is a dict, not an object: `project.outline.slides`
+                # raised AttributeError on every call, which the handler below swallowed
+                # so this method always returned None.
+                outline = project.outline
+                slides = outline.get('slides') if isinstance(outline, dict) else None
+                if not isinstance(slides, list):
+                    logger.warning(
+                        "Project %s outline has no slides list; cannot regenerate slide %s",
+                        project_id, slide_index
+                    )
                     return None
 
-                slide_data = project.outline.slides[slide_index]
+                if slide_index < 0 or slide_index >= len(slides):
+                    return None
+
+                slide_data = slides[slide_index]
+                if not isinstance(slide_data, dict):
+                    logger.warning(
+                        "Slide %s of project %s is not an object", slide_index, project_id
+                    )
+                    return None
+
+                slide_title = str(slide_data.get("title") or f"第{slide_index + 1}页")
 
                 # Generate new content
                 content = await self.generate_slide_content(
-                    slide_data["title"],
+                    slide_title,
                     request.scenario,
                     request.topic,
                     request.language
@@ -536,12 +565,14 @@ class SlideStreamingService:
 
                 # Create new slide content
                 new_slide = SlideContent(
-                    type=self._normalize_slide_type(slide_data.get("type", "content")),
-                    title=slide_data["title"],
+                    type=self._normalize_slide_type(
+                        slide_data.get("slide_type") or slide_data.get("type") or "content"
+                    ),
+                    title=slide_title,
                     subtitle=slide_data.get("subtitle", ""),
                     content=content,
                     bullet_points=self._extract_bullet_points(content),
-                    image_suggestions=await self._suggest_images(slide_data["title"], request.scenario),
+                    image_suggestions=await self._suggest_images(slide_title, request.scenario),
                     layout="default"
                 )
 
@@ -551,24 +582,34 @@ class SlideStreamingService:
                 logger.error(f"Error regenerating slide: {e}")
                 return None
 
-    async def lock_slide(self, project_id: str, slide_index: int, user_id: Optional[int] = None) -> bool:
-            """Lock a slide to prevent regeneration. If user_id is provided, enforces ownership."""
-            # Verify project ownership first if user_id is provided
+    async def _set_slide_lock(
+        self, project_id: str, slide_index: int, locked: bool, user_id: Optional[int] = None
+    ) -> bool:
             if user_id is not None:
                 project = await self.project_manager.get_project(project_id, user_id=user_id)
                 if not project:
                     return False
-            # This would be implemented with proper slide state management
-            # For now, return True as placeholder
-            return True
+
+            from ..db_project_manager import DatabaseProjectManager
+            db_manager = DatabaseProjectManager()
+            return await db_manager.set_slide_locked(project_id, slide_index, locked)
+
+    async def lock_slide(self, project_id: str, slide_index: int, user_id: Optional[int] = None) -> bool:
+            """Lock a slide to prevent regeneration. If user_id is provided, enforces ownership."""
+            return await self._set_slide_lock(project_id, slide_index, True, user_id)
 
     async def unlock_slide(self, project_id: str, slide_index: int, user_id: Optional[int] = None) -> bool:
             """Unlock a slide to allow regeneration. If user_id is provided, enforces ownership."""
-            # Verify project ownership first if user_id is provided
-            if user_id is not None:
-                project = await self.project_manager.get_project(project_id, user_id=user_id)
-                if not project:
-                    return False
-            # This would be implemented with proper slide state management
-            # For now, return True as placeholder
-            return True
+            return await self._set_slide_lock(project_id, slide_index, False, user_id)
+
+    async def get_locked_slide_indices(self, project_id: str) -> set:
+            """Indices of slides the user locked against regeneration."""
+            try:
+                from ..db_project_manager import DatabaseProjectManager
+                db_manager = DatabaseProjectManager()
+                return await db_manager.get_locked_slide_indices(project_id)
+            except Exception as lock_error:
+                logger.warning(
+                    "Could not read slide locks for project %s: %s", project_id, lock_error
+                )
+                return set()
