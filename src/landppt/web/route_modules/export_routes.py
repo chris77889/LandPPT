@@ -892,9 +892,13 @@ async def get_task_status(
                 "html_to_pptx_screenshot",
                 "narration_audio_export",
                 "narration_video_export",
+                "unattended_pipeline",
             ):
                 # Provide the download endpoint for export tasks. The download handler will validate existence.
-                response["download_url"] = f"/api/landppt/tasks/{task_id}/download"
+                # An unattended run only has something to download when it reached the video stage,
+                # which is exactly when its result carries an artifact_id.
+                if task.task_type != "unattended_pipeline" or task.result.get("artifact_id"):
+                    response["download_url"] = f"/api/landppt/tasks/{task_id}/download"
             # Surface error details even if status is "completed" (legacy behavior).
             if task.result.get("success") is False:
                 response["error"] = task.result.get("error") or task.result.get("message") or task.error

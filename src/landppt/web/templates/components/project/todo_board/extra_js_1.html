@@ -26,6 +26,10 @@
     const hasConfirmedRequirements = {{ 'true' if project and project.confirmed_requirements else 'false' }};
     {% set outline_stage = todo_board.stages | selectattr('id', 'equalto', 'outline_generation') | first %}
     const initialOutlineStageStatus = {{ (outline_stage.status if outline_stage else '') | tojson }};
+    // An unattended run already owns this project's stages. Auto-starting here would
+    // open a second outline stream against the same project: duplicate LLM calls,
+    // duplicate billing, and two writers racing on the same outline row.
+    const unattendedActive = {{ 'true' if unattended_active else 'false' }};
     let outlineResumeAutoStartScheduled = false;
     let outlineHasGeneratedInSession = false;
 
@@ -817,6 +821,10 @@
     }
 
     function shouldResumeOutlineGenerationOnLoad() {
+        if (unattendedActive) {
+            return false;
+        }
+
         if (!hasConfirmedRequirements || hasAnyOutlineSlides() || hasInitialPPTOutput()) {
             return false;
         }
@@ -840,9 +848,48 @@
         }, delayMs);
     }
 
+    // While an unattended run owns the project there is nothing to show in the
+    // outline card yet, and the skeleton it would render is pure theatre: a fake
+    // indeterminate bar and hardcoded "正在理解主题..." that never changes, sitting
+    // right above the monitor's real per-stage progress — and still claiming to be
+    // generating the outline long after the run has moved on to slides or audio.
+    function renderUnattendedOutlinePlaceholder() {
+        if (document.getElementById('unattended-outline-placeholder')) {
+            return;
+        }
+        const container = document.getElementById('workspace-body');
+        if (!container) {
+            return;
+        }
+
+        const placeholder = document.createElement('div');
+        placeholder.id = 'unattended-outline-placeholder';
+        placeholder.style.cssText = 'max-width: 1200px; margin: 0 auto 40px; background: var(--surface);'
+            + ' border: 1px dashed var(--border-color); border-radius: var(--border-radius-lg);'
+            + ' padding: 40px; text-align: center; color: var(--text-secondary);';
+        placeholder.innerHTML = `
+            <div style="font-size: 1.6rem; margin-bottom: 12px;"><i class="fas fa-robot"></i></div>
+            <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">
+                无人值守任务正在生成本项目
+            </div>
+            <div style="font-size: 0.9rem;">
+                大纲、PPT 等内容会在生成后自动出现，进度见上方面板，期间无需停留在此页面
+            </div>
+        `;
+        container.appendChild(placeholder);
+    }
+
     function hydrateOutlineSectionFromProjectState() {
         if (!shouldRenderInitialOutlineSection()) {
             return false;
+        }
+
+        const hasOutlineAlready = initialProjectOutline
+            && Array.isArray(initialProjectOutline.slides)
+            && initialProjectOutline.slides.length > 0;
+        if (unattendedActive && !hasOutlineAlready) {
+            renderUnattendedOutlinePlaceholder();
+            return true;
         }
 
         showOutlineSection();
@@ -1001,6 +1048,12 @@
             return;
         }
 
+        // 无人值守任务已在服务端生成大纲，页面不得再发起一路生成。
+        if (unattendedActive) {
+            hydrateOutlineSectionFromProjectState();
+            return;
+        }
+
         if (hasAnyOutlineSlides()) {
             hydrateOutlineSectionFromProjectState();
             return;
@@ -1145,15 +1198,16 @@
             </div>
         `;
 
-            // Insert after requirements section or at the beginning
+            // Insert after requirements section, else into the dedicated anchor.
+            // (The old fallback matched `div[style*="text-align: center"]`, whose first
+            // hit is the hero band — the card ended up inside an overflow:hidden,
+            // centre-aligned banner.)
             const requirementsSection = document.getElementById('requirements-section');
+            const container = document.getElementById('workspace-body');
             if (requirementsSection) {
                 requirementsSection.parentNode.insertBefore(outlineSection, requirementsSection.nextSibling);
-            } else {
-                const container = document.querySelector('div[style*="text-align: center"]');
-                if (container) {
-                    container.appendChild(outlineSection);
-                }
+            } else if (container) {
+                container.appendChild(outlineSection);
             }
         }
 
@@ -3160,7 +3214,15 @@
     window.addEventListener('pagehide', stopStageSync);
     window.addEventListener('beforeunload', stopStageSync);
 
-    scheduleStageSync(STAGE_SYNC_INTERVAL_MS);
+    if (unattendedActive) {
+        // Its only job is toggling the "start PPT" button, which needs an outline
+        // rendered in this session — impossible while the run is server-side. The
+        // unattended monitor is the live surface here, so this would be 4 req/min
+        // of pure noise.
+        stopStageSync();
+    } else {
+        scheduleStageSync(STAGE_SYNC_INTERVAL_MS);
+    }
 
     // Modal functionality removed - using direct stage execution
 

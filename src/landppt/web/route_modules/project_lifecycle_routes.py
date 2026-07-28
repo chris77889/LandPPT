@@ -17,7 +17,13 @@ from .outline_support import (
     _normalize_content_source_urls,
     _save_uploaded_files_for_confirmed_requirements,
 )
-from .support import get_ppt_service_for_user, ppt_service, templates
+from .support import get_ppt_service_for_user, logger, ppt_service, templates
+from .unattended_support import (
+    build_unattended_requirements,
+    maybe_start_unattended_run,
+    require_unattended_admin,
+    resolve_unattended_config,
+)
 
 router = APIRouter()
 
@@ -41,12 +47,37 @@ async def web_scenarios(
 ):
     """一步式 PPT 创建页面（主题、需求与全部生成参数合并在同一个输入区）。"""
     valid_ids = {item["id"] for item in SCENARIOS}
+    # Seed the unattended controls from the user's saved settings; otherwise the
+    # settings page's defaults would never reach the primary creation path.
+    unattended_defaults = await resolve_unattended_config(user_id=user.id)
+
+    # Unattended runs skip the template-selection page, so the template has to be
+    # picked here. A listing failure must not break project creation — the picker
+    # then just offers 默认 / 自由模板.
+    template_options: List[Dict[str, Any]] = []
+    try:
+        user_ppt_service = get_ppt_service_for_user(user.id)
+        template_options = [
+            {
+                "id": item.get("id"),
+                "name": item.get("template_name") or f"模板 {item.get('id')}",
+                "is_default": bool(item.get("is_default")),
+            }
+            for item in await user_ppt_service.global_template_service.get_all_templates()
+            if item.get("id") is not None
+        ]
+        template_options.sort(key=lambda item: (not item["is_default"], item["name"]))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not load templates for the creation page: %s", exc)
+
     return templates.TemplateResponse(
         "pages/project/scenarios.html",
         {
             "request": request,
             "scenarios": SCENARIOS,
             "selected_scenario": scenario if scenario in valid_ids else "general",
+            "unattended_defaults": unattended_defaults,
+            "template_options": template_options,
         },
     )
 
@@ -190,9 +221,16 @@ async def web_create_project_and_confirm(
     content_urls: str = Form(None),
     file_processing_mode: str = Form("markitdown"),
     content_analysis_depth: str = Form("fast"),
+    unattended_mode: bool = Form(False),
+    stop_at_stage: str = Form("ppt"),
+    unattended_notify_in_app: bool = Form(True),
+    unattended_notify_email: bool = Form(False),
+    unattended_template_mode: str = Form("auto"),
+    unattended_template_id: str = Form(""),
     user: User = Depends(get_current_user_required),
 ):
     """一步式创建项目并确认需求，直接进入大纲生成阶段。"""
+    require_unattended_admin(user, enabled=unattended_mode)
     project_id: str | None = None
     try:
         topic = (topic or "").strip()
@@ -260,6 +298,14 @@ async def web_create_project_and_confirm(
             "content_analysis_depth": content_analysis_depth if content_source in ("file", "url") else None,
             "file_generated_outline": None,
             "force_file_outline_regeneration": content_source in ("file", "url"),
+            "unattended": build_unattended_requirements(
+                enabled=unattended_mode,
+                stop_at_stage=stop_at_stage,
+                notify_in_app=unattended_notify_in_app,
+                notify_email=unattended_notify_email,
+                template_mode=unattended_template_mode,
+                template_id=unattended_template_id,
+            ),
         }
         if saved_file_metadata:
             confirmed_requirements.update(saved_file_metadata)
@@ -271,11 +317,23 @@ async def web_create_project_and_confirm(
         if not success:
             raise RuntimeError("需求确认失败")
 
-        return JSONResponse({
+        payload: Dict[str, Any] = {
             "status": "success",
             "project_id": project_id,
             "redirect_url": f"/projects/{project_id}/todo",
-        })
+        }
+
+        unattended = await maybe_start_unattended_run(
+            project_id=project_id,
+            project_topic=topic,
+            user_id=user.id,
+            confirmed_requirements=confirmed_requirements,
+            language=language,
+        )
+        if unattended:
+            payload["unattended"] = unattended
+
+        return JSONResponse(payload)
     except Exception as exc:
         payload: Dict[str, Any] = {"status": "error", "message": str(exc)}
         if project_id:

@@ -144,6 +144,9 @@ class PPTProject(BaseModel):
     title: str
     scenario: str
     topic: str
+    # Owner id, carried so background services (narration/video export) can resolve
+    # the owner's per-user AI and TTS configuration without a second lookup.
+    user_id: Optional[int] = None
     requirements: Optional[str] = None
     status: Literal["draft", "in_progress", "completed", "archived"] = "draft"
     outline: Optional[Dict[str, Any]] = None  # Changed to Dict for flexibility

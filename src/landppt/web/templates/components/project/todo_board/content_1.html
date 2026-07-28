@@ -11,6 +11,14 @@
     </div>
 </div>
 
+<!-- 无人值守任务监控面板（无任务时保持隐藏） -->
+<div id="unattendedMonitor" style="max-width: 1200px; margin: 24px auto 0;" hidden></div>
+
+<!-- Anchor for JS-injected workspace panels (outline card, unattended notice).
+     Without it showOutlineSection() falls back to the first centred div, which is
+     the hero band — dropping a 600px card inside an overflow:hidden banner. -->
+<div id="workspace-body"></div>
+
 <!-- Requirements Confirmation Section -->
 {% set requirements_stage = todo_board.stages | selectattr('id', 'equalto', 'requirements_confirmation') | first %}
 {% if not requirements_stage or requirements_stage.status == 'pending' %}
@@ -240,17 +248,29 @@
             查看项目详情
         </a>
 
-        {% if project and project.slides_data and project.slides_data|length > 0 %}
+        {% set has_slides = project and project.slides_data and project.slides_data|length > 0 %}
+        {# Rendered in both states so the row keeps its shape across the reload that
+           follows an unattended run, instead of silently growing two buttons. #}
+        {% if has_slides %}
         <a href="/projects/{{ todo_board.task_id }}/preview" target="_blank"
-            style="background: #1f2a37; color: var(--surface); text-decoration: none; padding: 10px 20px; border-radius: 10px; font-weight: 600; transition: all 0.3s ease; display: flex; align-items: center; gap: 6px; font-size: 0.9em;"
+            style="background: #1f2a37; color: var(--surface); text-decoration: none; padding: 10px 20px; border-radius: 10px; transition: all 0.3s ease; display: flex; align-items: center; gap: 6px; font-size: 0.9em; font-weight: 600;"
             onmouseover="this.style.transform='translateY(-2px)';" onmouseout="this.style.transform='translateY(0)';">
             预览 PPT
         </a>
         <a href="/projects/{{ todo_board.task_id }}/edit" target="_blank"
-            style="background: #3f3f3f; color: var(--surface); text-decoration: none; padding: 10px 20px; border-radius: 10px; font-weight: 600; transition: all 0.3s ease; display: flex; align-items: center; gap: 6px; font-size: 0.9em;"
+            style="background: #3f3f3f; color: var(--surface); text-decoration: none; padding: 10px 20px; border-radius: 10px; transition: all 0.3s ease; display: flex; align-items: center; gap: 6px; font-size: 0.9em; font-weight: 600;"
             onmouseover="this.style.transform='translateY(-2px)';" onmouseout="this.style.transform='translateY(0)';">
             编辑 PPT
         </a>
+        {% else %}
+        <span title="PPT 生成后可用" aria-disabled="true"
+            style="background: var(--surface-subtle); color: var(--text-muted); padding: 10px 20px; border-radius: 10px; font-weight: 600; display: flex; align-items: center; gap: 6px; font-size: 0.9em; cursor: not-allowed;">
+            预览 PPT
+        </span>
+        <span title="PPT 生成后可用" aria-disabled="true"
+            style="background: var(--surface-subtle); color: var(--text-muted); padding: 10px 20px; border-radius: 10px; font-weight: 600; display: flex; align-items: center; gap: 6px; font-size: 0.9em; cursor: not-allowed;">
+            编辑 PPT
+        </span>
         {% endif %}
 
         <a href="/projects"

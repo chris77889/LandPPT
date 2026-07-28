@@ -3,6 +3,7 @@
 {% block title %}TODO 看板 - {{ todo_board.title }} - LandPPT{% endblock %}
 
 {% block extra_css %}
+<link rel="stylesheet" href="/static/css/shared/unattended_monitor.css">
 <style>
 {% include "components/project/todo_board/extra_css_1.html" %}
 </style>
@@ -13,7 +14,42 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="/static/js/shared/unattended_monitor.js?v=20260727"></script>
 <script>
 {% include "components/project/todo_board/extra_js_1.html" %}
+</script>
+<script>
+    (function () {
+        const hasOutlineOnPage = {{ 'true' if project and project.outline and project.outline.get('slides') else 'false' }};
+        let refreshing = false;
+
+        // Reloading is how new server-side output reaches this page. Do it at the
+        // moments something actually became viewable, not on a timer.
+        const refreshSoon = (delayMs) => {
+            if (refreshing) return;
+            refreshing = true;
+            setTimeout(() => window.location.reload(), delayMs);
+        };
+
+        window.UnattendedMonitor?.mount({
+            container: 'unattendedMonitor',
+            projectId: {{ todo_board.task_id | tojson }},
+            initiallyActive: {{ 'true' if unattended_active else 'false' }},
+            // The outline is the first thing worth looking at, and it lands minutes
+            // before the run ends. Without this the page shows nothing until the
+            // whole pipeline (possibly a 10-minute video export) is finished.
+            onUpdate: (run) => {
+                if (hasOutlineOnPage) return;
+                const outline = (run.stages || []).find((s) => s.id === 'outline');
+                if (outline && outline.status === 'completed') {
+                    refreshSoon(600);
+                }
+            },
+            // On success the page content is stale; on failure/cancel the reload is
+            // what un-sticks the workspace. Wait long enough that the monitor's
+            // terminal toast is actually readable before the page goes away.
+            onComplete: (run) => refreshSoon(run.task_status === 'completed' ? 1500 : 6000),
+        });
+    })();
 </script>
 {% endblock %}

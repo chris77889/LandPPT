@@ -1,3 +1,9 @@
+        // An unattended run owns this project's generation. The page must not start a
+        // second one, and its 暂停/停止 buttons must stay hidden: they only set the slide
+        // cancel flag, which the pipeline reads as a generation FAILURE. Stopping an
+        // unattended run is the monitor panel's 停止 button, which sets both flags.
+        const unattendedActive = {{ 'true' if unattended_active else 'false' }};
+
         let eventSource = null;
         let slidesData = [];
         const currentlyGeneratingPages = new Set();
@@ -1022,8 +1028,12 @@
             if (startBtn) startBtn.style.display = 'none';
             if (statusDiv) statusDiv.style.display = 'block';
 
-            if (stopBtn) stopBtn.style.display = 'inline-block';
-            if (pauseBtn) pauseBtn.style.display = 'inline-block';
+            // Under an unattended run these would cancel the slide stage only, which the
+            // pipeline reports as a failure and which abandons the remaining stages.
+            // The monitor panel's 停止 is the correct control.
+            const canControlGeneration = !unattendedActive;
+            if (stopBtn) stopBtn.style.display = canControlGeneration ? 'inline-block' : 'none';
+            if (pauseBtn) pauseBtn.style.display = canControlGeneration ? 'inline-block' : 'none';
             if (resumeBtn) resumeBtn.style.display = 'none';
 
             // 有幻灯片数据时显示编辑器和放映按钮
@@ -1981,7 +1991,8 @@
             const autoStartParam = urlParams.get('auto_start') === 'true';
 
             // 检查是否需要自动开始或继续生成
-            const shouldAutoStart = autoStartParam || (projectSlidesData && projectSlidesData.length > 0 && !isCompleted);
+            const shouldAutoStart = !unattendedActive
+                && (autoStartParam || (projectSlidesData && projectSlidesData.length > 0 && !isCompleted));
 
             if (shouldAutoStart) {
                 setTimeout(() => {

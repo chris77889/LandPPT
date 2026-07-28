@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/shared/site_notice.css">
     <link rel="stylesheet" href="/static/css/shared/notify.css">
+    <link rel="stylesheet" href="/static/css/shared/notification_center.css">
     <style>
         @import url('https://fonts.loli.net/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
@@ -458,6 +459,11 @@
 
                 {% if current_user %}
                 <div class="nav-user">
+                    <a href="#" class="nav-bell" id="navNotificationBell" title="通知" role="button"
+                        aria-haspopup="dialog" aria-expanded="false">
+                        <i class="fas fa-bell"></i> 通知
+                        <span class="nav-bell-badge" id="navNotificationBadge" hidden>0</span>
+                    </a>
                     {% if current_user and credits_enabled %}
                     <a href="/credits" title="我的积分">
                         <i class="fas fa-coins"></i> 积分
@@ -514,11 +520,18 @@
 
     <script src="/static/js/shared/notify.js?v=20260726"></script>
     <script src="/static/js/shared/site_notice.js?v=20260322"></script>
+    <script src="/static/js/shared/notification_center.js?v=20260727"></script>
     <script>
         window.SiteNotice?.loadPublicSettings({
             noticeContainer: 'globalSiteNotice',
             sponsorLink: 'footerSponsorLink',
         });
+        {% if current_user %}
+        window.NotificationCenter?.mount({
+            bell: 'navNotificationBell',
+            badge: 'navNotificationBadge',
+        });
+        {% endif %}
         document.getElementById('navLogoutLink')?.addEventListener('click', async (e) => {
             e.preventDefault();
             const href = e.currentTarget.href;

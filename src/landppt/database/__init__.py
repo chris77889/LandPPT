@@ -13,6 +13,7 @@ __all__ = [
     'ProjectVersion',
     'SlideData',
     'PPTTemplate',
+    'Notification',
     'migration_manager',
     'health_checker',
     'DatabaseService',
@@ -21,7 +22,8 @@ __all__ = [
     'TodoStageRepository',
     'ProjectVersionRepository',
     'SlideDataRepository',
-    'PPTTemplateRepository'
+    'PPTTemplateRepository',
+    'NotificationRepository'
 ]
 
 
@@ -36,7 +38,7 @@ def __getattr__(name: str) -> Any:
         module = import_module(".database", __name__)
         return getattr(module, name)
 
-    if name in {"Project", "TodoBoard", "TodoStage", "ProjectVersion", "SlideData", "PPTTemplate"}:
+    if name in {"Project", "TodoBoard", "TodoStage", "ProjectVersion", "SlideData", "PPTTemplate", "Notification"}:
         module = import_module(".models", __name__)
         return getattr(module, name)
 
@@ -59,6 +61,7 @@ def __getattr__(name: str) -> Any:
         "ProjectVersionRepository",
         "SlideDataRepository",
         "PPTTemplateRepository",
+        "NotificationRepository",
     }:
         module = import_module(".repositories", __name__)
         return getattr(module, name)

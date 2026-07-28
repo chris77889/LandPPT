@@ -300,6 +300,9 @@ class DatabaseService:
             title=db_project.title,
             scenario=db_project.scenario,
             topic=db_project.topic,
+            # getattr: this converter is also handed lightweight row stand-ins that
+            # carry only the columns a caller cares about.
+            user_id=getattr(db_project, "user_id", None),
             requirements=db_project.requirements,
             status=project_status,
             outline=db_project.outline,

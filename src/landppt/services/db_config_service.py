@@ -126,6 +126,15 @@ class DatabaseConfigService:
             "searxng_language": {"type": "text", "category": "generation_params", "default": "auto"},
             "searxng_timeout": {"type": "number", "category": "generation_params", "default": "30"},
 
+            # Unattended (无人值守) Pipeline Configuration
+            # stop stage ids come from services/unattended_service.STAGE_IDS
+            "unattended_default_stop_stage": {"type": "select", "category": "generation_params", "default": "ppt"},
+            "unattended_notify_in_app": {"type": "boolean", "category": "generation_params", "default": "true"},
+            "unattended_notify_email": {"type": "boolean", "category": "generation_params", "default": "false"},
+            "unattended_tts_provider": {"type": "select", "category": "generation_params", "default": "edge_tts"},
+            "unattended_video_fps": {"type": "number", "category": "generation_params", "default": "30"},
+            "unattended_video_render_mode": {"type": "select", "category": "generation_params", "default": "live"},
+
             # Research Configuration
             "research_provider": {"type": "select", "category": "generation_params", "default": "tavily"},
             "research_enable_content_extraction": {"type": "boolean", "category": "generation_params", "default": "true"},

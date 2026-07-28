@@ -219,6 +219,7 @@ class BackgroundTaskManager:
                     "narration_generation",
                     "narration_audio_export",
                     "narration_video_export",
+                    "unattended_pipeline",
                 ]
                 for task_type in task_types:
                     index_key = f"bg_active_tasks:{task_type}"

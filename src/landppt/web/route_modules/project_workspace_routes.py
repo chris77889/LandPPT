@@ -15,6 +15,7 @@ from ...auth.middleware import get_current_user_required
 from ...core.config import ai_config, app_config
 from ...database.models import User
 from .support import _apply_no_store_headers, logger, ppt_service, templates
+from .unattended_support import has_active_unattended_run
 
 router = APIRouter()
 
@@ -146,7 +147,13 @@ async def web_project_todo_board(
             if use_integrated_editor
             else "pages/project/todo_board.html"
         )
-        template_context = {"request": request, "todo_board": todo_board}
+        template_context = {
+            "request": request,
+            "todo_board": todo_board,
+            # While an unattended run owns this project the page must not start its
+            # own outline/PPT generation, or the two race and double-bill.
+            "unattended_active": await has_active_unattended_run(project_id, user.id),
+        }
         if project:
             template_context["project"] = project
 

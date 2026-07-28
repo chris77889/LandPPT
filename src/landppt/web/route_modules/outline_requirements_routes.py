@@ -26,6 +26,12 @@ from .support import (
     ppt_service,
     templates,
 )
+from .unattended_support import (
+    build_unattended_requirements,
+    has_active_unattended_run,
+    maybe_start_unattended_run,
+    require_unattended_admin,
+)
 
 router = APIRouter()
 
@@ -53,7 +59,8 @@ async def web_project_todo_editor(
             "request": request,
             "todo_board": project.todo_board,
             "project": project,
-            "auto_start": auto_start
+            "auto_start": auto_start,
+            "unattended_active": await has_active_unattended_run(project_id, user.id),
         })
 
     except Exception as e:
@@ -84,9 +91,16 @@ async def confirm_project_requirements(
     content_urls: str = Form(None),
     file_processing_mode: str = Form("markitdown"),
     content_analysis_depth: str = Form("standard"),
+    unattended_mode: bool = Form(False),
+    stop_at_stage: str = Form("ppt"),
+    unattended_notify_in_app: bool = Form(True),
+    unattended_notify_email: bool = Form(False),
+    unattended_template_mode: str = Form("auto"),
+    unattended_template_id: str = Form(""),
     user: User = Depends(get_current_user_required)
 ):
     """Confirm project requirements and generate TODO list - 支持多文件上传和联网搜索集成"""
+    require_unattended_admin(user, enabled=unattended_mode)
     try:
         user_ppt_service = get_ppt_service_for_user(user.id)
 
@@ -226,6 +240,14 @@ async def confirm_project_requirements(
             "content_analysis_depth": content_analysis_depth if content_source in ("file", "url") else None,
             "file_generated_outline": file_outline if content_source not in ("file", "url") else None,
             "force_file_outline_regeneration": content_source in ("file", "url"),
+            "unattended": build_unattended_requirements(
+                enabled=unattended_mode,
+                stop_at_stage=stop_at_stage,
+                notify_in_app=unattended_notify_in_app,
+                notify_email=unattended_notify_email,
+                template_mode=unattended_template_mode,
+                template_id=unattended_template_id,
+            ),
         }
 
         # 如果是文件项目，保存文件信息
@@ -258,11 +280,23 @@ async def confirm_project_requirements(
 
         # Return JSON success response for AJAX request
         from fastapi.responses import JSONResponse
-        return JSONResponse({
+        response_payload: Dict[str, Any] = {
             "status": "success",
             "message": "需求确认完成",
             "redirect_url": f"/projects/{project_id}/todo"
-        })
+        }
+
+        unattended = await maybe_start_unattended_run(
+            project_id=project_id,
+            project_topic=topic or project.topic,
+            user_id=user.id,
+            confirmed_requirements=confirmed_requirements,
+            language=language,
+        )
+        if unattended:
+            response_payload["unattended"] = unattended
+
+        return JSONResponse(response_payload)
 
     except Exception as e:
         from fastapi.responses import JSONResponse

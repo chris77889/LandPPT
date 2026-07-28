@@ -177,6 +177,15 @@ class DatabaseMigration:
             "down": self._migration_017_down,
         })
 
+        # Migration 018: In-app notifications
+        self.migrations.append({
+            "version": "018",
+            "name": "add_notifications_table",
+            "description": "Add notifications table for in-app delivery of unattended run results",
+            "up": self._migration_018_up,
+            "down": self._migration_018_down,
+        })
+
     @staticmethod
     def _dialect_name(session: AsyncSession) -> str:
         try:
@@ -1541,6 +1550,86 @@ class DatabaseMigration:
         except Exception as e:
             await session.rollback()
             logger.error(f"Migration 017 rollback failed: {e}")
+            raise
+
+    async def _migration_018_up(self, session: AsyncSession):
+        """Create notifications table for in-app user notifications."""
+        logger.info("Running migration 018: Creating notifications table")
+        dialect = self._dialect_name(session)
+        if dialect == "postgresql":
+            create_table_sql = """
+            CREATE TABLE IF NOT EXISTS notifications (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                project_id VARCHAR(36) NULL REFERENCES projects(project_id),
+                notification_type VARCHAR(50) NOT NULL,
+                level VARCHAR(20) NOT NULL DEFAULT 'info',
+                title VARCHAR(255) NOT NULL,
+                body TEXT NULL,
+                link_url TEXT NULL,
+                payload JSONB NULL,
+                is_read BOOLEAN NOT NULL DEFAULT FALSE,
+                read_at DOUBLE PRECISION NULL,
+                created_at DOUBLE PRECISION NOT NULL
+            )
+            """
+        else:
+            create_table_sql = """
+            CREATE TABLE IF NOT EXISTS notifications (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                project_id VARCHAR(36) NULL,
+                notification_type VARCHAR(50) NOT NULL,
+                level VARCHAR(20) NOT NULL DEFAULT 'info',
+                title VARCHAR(255) NOT NULL,
+                body TEXT NULL,
+                link_url TEXT NULL,
+                payload JSON NULL,
+                is_read BOOLEAN NOT NULL DEFAULT 0,
+                read_at FLOAT NULL,
+                created_at FLOAT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(project_id) REFERENCES projects(project_id)
+            )
+            """
+
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_project_id ON notifications(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(notification_type)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)",
+        ]
+        try:
+            await session.execute(text(create_table_sql))
+            for index_sql in indexes:
+                await session.execute(text(index_sql))
+            await session.commit()
+            logger.info("Migration 018 completed successfully")
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Migration 018 failed: {e}")
+            raise
+
+    async def _migration_018_down(self, session: AsyncSession):
+        """Migration 018 rollback."""
+        logger.info("Rolling back migration 018: Removing notifications table")
+        indexes = [
+            "DROP INDEX IF EXISTS idx_notifications_user_id",
+            "DROP INDEX IF EXISTS idx_notifications_project_id",
+            "DROP INDEX IF EXISTS idx_notifications_type",
+            "DROP INDEX IF EXISTS idx_notifications_is_read",
+            "DROP INDEX IF EXISTS idx_notifications_created_at",
+        ]
+        try:
+            for index_sql in indexes:
+                await session.execute(text(index_sql))
+            await session.execute(text("DROP TABLE IF EXISTS notifications"))
+            await session.commit()
+            logger.info("Migration 018 rollback completed")
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Migration 018 rollback failed: {e}")
             raise
 
     async def _create_migration_table(self, session: AsyncSession):

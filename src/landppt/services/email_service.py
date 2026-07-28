@@ -70,33 +70,38 @@ async def send_email(to_email: str, subject: str, html_content: str) -> Tuple[bo
     if not app_config.smtp_host or not app_config.smtp_user:
         logger.warning("SMTP not configured, skipping email send")
         return False, "邮件服务未配置"
-    
+
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
         msg['From'] = f"{app_config.smtp_from_name} <{app_config.smtp_from_email or app_config.smtp_user}>"
         msg['To'] = to_email
-        
+
         html_part = MIMEText(html_content, 'html', 'utf-8')
         msg.attach(html_part)
-        
-        if app_config.smtp_use_ssl:
-            server = smtplib.SMTP_SSL(app_config.smtp_host, app_config.smtp_port, timeout=30)
-        else:
-            server = smtplib.SMTP(app_config.smtp_host, app_config.smtp_port, timeout=30)
-            server.starttls()
-        
-        server.login(app_config.smtp_user, app_config.smtp_password)
-        server.sendmail(
-            app_config.smtp_from_email or app_config.smtp_user,
-            [to_email],
-            msg.as_string()
-        )
-        server.quit()
-        
+
+        def _send_smtp():
+            if app_config.smtp_use_ssl:
+                server = smtplib.SMTP_SSL(app_config.smtp_host, app_config.smtp_port, timeout=30)
+            else:
+                server = smtplib.SMTP(app_config.smtp_host, app_config.smtp_port, timeout=30)
+                server.starttls()
+
+            server.login(app_config.smtp_user, app_config.smtp_password)
+            server.sendmail(
+                app_config.smtp_from_email or app_config.smtp_user,
+                [to_email],
+                msg.as_string()
+            )
+            server.quit()
+
+        # smtplib is blocking; connect + login + send can stall the event loop for
+        # up to the 30s socket timeout, which stalls every other request on the worker.
+        await asyncio.to_thread(_send_smtp)
+
         logger.info(f"Email sent successfully to {to_email}")
         return True, "发送成功"
-        
+
     except smtplib.SMTPAuthenticationError as e:
         logger.error(f"SMTP authentication error: {e}")
         return False, "邮件服务认证失败"

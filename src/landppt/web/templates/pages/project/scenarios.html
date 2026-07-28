@@ -882,6 +882,82 @@
                     </div>
                 </div>
 
+                <div class="pill-wrap" {% if not current_user or not current_user.is_admin %}hidden{% endif %}>
+                    <button type="button" class="pill" data-pop="unattended" aria-haspopup="true" aria-expanded="false">
+                        <i class="fas fa-robot"></i>
+                        <span class="pill-text" data-label="unattended">无人值守</span>
+                        <i class="fas fa-chevron-down pill-caret"></i>
+                    </button>
+                    <div class="popover" id="pop-unattended" hidden>
+                        <div class="popover-title">无人值守</div>
+                        <label class="switch-row">
+                            <input type="checkbox" id="unattended_mode">
+                            <span class="switch-track"><span class="switch-thumb"></span></span>
+                            <span class="switch-text">
+                                <span class="switch-name">开启无人值守</span>
+                                <span class="switch-desc">提交后自动完成大纲、模板、PPT 等阶段，无需人工确认</span>
+                            </span>
+                        </label>
+                        <div class="popover-divider"></div>
+                        <div class="pop-field">
+                            <label for="stop_at_stage">停止阶段</label>
+                            {% set unattended_stop = unattended_defaults.stop_after if unattended_defaults else 'ppt' %}
+                            <select id="stop_at_stage" class="pop-select">
+                                <option value="outline" {% if unattended_stop == 'outline' %}selected{% endif %}>生成大纲后停止</option>
+                                <option value="template" {% if unattended_stop == 'template' %}selected{% endif %}>选择模板后停止</option>
+                                <option value="ppt" {% if unattended_stop == 'ppt' %}selected{% endif %}>生成 PPT 后停止</option>
+                                <option value="speech_script" {% if unattended_stop == 'speech_script' %}selected{% endif %}>生成演讲稿后停止</option>
+                                <option value="narration_audio" {% if unattended_stop == 'narration_audio' %}selected{% endif %}>生成配音后停止</option>
+                                <option value="video" {% if unattended_stop == 'video' %}selected{% endif %}>导出讲解视频后停止</option>
+                            </select>
+                            <div class="popover-hint">
+                                按顺序执行到所选阶段为止；后续阶段不会运行
+                            </div>
+                        </div>
+                        <div class="popover-divider"></div>
+                        <div class="pop-field">
+                            <label for="unattended_template_mode">模板</label>
+                            <select id="unattended_template_mode" class="pop-select">
+                                <option value="auto">使用我的默认模板</option>
+                                <option value="global">指定已有模板</option>
+                                <option value="free">自由模板（AI 按大纲生成）</option>
+                            </select>
+                            <div class="popover-hint">
+                                无人值守会跳过模板选择页面，请在这里先定好
+                            </div>
+                        </div>
+                        <div class="pop-field" id="unattended-template-pick" style="display: none; padding-top: 8px;">
+                            <label for="unattended_template_id">选择模板</label>
+                            <select id="unattended_template_id" class="pop-select">
+                                {% for item in template_options %}
+                                <option value="{{ item.id }}">{{ item.name }}{% if item.is_default %}（默认）{% endif %}</option>
+                                {% else %}
+                                <option value="">（暂无可用模板）</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="popover-divider"></div>
+                        <label class="switch-row">
+                            <input type="checkbox" id="unattended_notify_in_app"
+                                {% if not unattended_defaults or unattended_defaults.notify_in_app %}checked{% endif %}>
+                            <span class="switch-track"><span class="switch-thumb"></span></span>
+                            <span class="switch-text">
+                                <span class="switch-name">系统通知</span>
+                                <span class="switch-desc">完成后在导航栏铃铛推送站内通知</span>
+                            </span>
+                        </label>
+                        <label class="switch-row">
+                            <input type="checkbox" id="unattended_notify_email"
+                                {% if unattended_defaults and unattended_defaults.notify_email %}checked{% endif %}>
+                            <span class="switch-track"><span class="switch-thumb"></span></span>
+                            <span class="switch-text">
+                                <span class="switch-name">邮件通知</span>
+                                <span class="switch-desc">完成后发送邮件到账号绑定的邮箱</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
                 <div class="pill-wrap">
                     <button type="button" class="pill" data-toggle="network" title="联网深度研究" aria-pressed="false">
                         <i class="fas fa-globe"></i>
@@ -938,6 +1014,15 @@
         { id: 'en', name: 'English' }
     ];
 
+    const STOP_STAGES = [
+        { id: 'outline', label: '至大纲' },
+        { id: 'template', label: '至模板' },
+        { id: 'ppt', label: '至 PPT' },
+        { id: 'speech_script', label: '至演讲稿' },
+        { id: 'narration_audio', label: '至配音' },
+        { id: 'video', label: '至视频' }
+    ];
+
     const MAX_FILE_BYTES = 100 * 1024 * 1024;
     const ALLOWED_FILE_EXTENSIONS = ['pdf', 'docx', 'txt', 'md', 'jpg', 'jpeg', 'png', 'xlsx', 'csv'];
 
@@ -956,6 +1041,13 @@
         includePageNumbers: true,
         fileProcessingMode: 'markitdown',
         contentAnalysisDepth: 'fast',
+        unattendedMode: false,
+        unattendedTemplateMode: 'auto',
+        unattendedTemplateId: '',
+        // Seeded from the user's saved 无人值守 settings (系统配置 → 生成参数).
+        stopAtStage: {{ (unattended_defaults.stop_after if unattended_defaults else 'ppt') | tojson }},
+        unattendedNotifyInApp: {{ 'true' if (not unattended_defaults or unattended_defaults.notify_in_app) else 'false' }},
+        unattendedNotifyEmail: {{ 'true' if (unattended_defaults and unattended_defaults.notify_email) else 'false' }},
         files: [],
         urls: ''
     };
@@ -1179,6 +1271,23 @@
     $('include_transition_pages').addEventListener('change', (e) => { state.includeTransitionPages = e.target.checked; renderPills(); });
     $('include_page_numbers').addEventListener('change', (e) => { state.includePageNumbers = e.target.checked; renderPills(); });
     $('content_urls').addEventListener('input', (e) => { state.urls = e.target.value; renderTray(); renderPills(); });
+    $('unattended_mode').addEventListener('change', (e) => { state.unattendedMode = e.target.checked; renderPills(); });
+    $('stop_at_stage').addEventListener('change', (e) => { state.stopAtStage = e.target.value; renderPills(); });
+    $('unattended_template_mode').addEventListener('change', (e) => {
+        state.unattendedTemplateMode = e.target.value;
+        syncTemplatePicker();
+        renderPills();
+    });
+    $('unattended_template_id').addEventListener('change', (e) => { state.unattendedTemplateId = e.target.value; });
+
+    function syncTemplatePicker() {
+        const picker = $('unattended-template-pick');
+        if (picker) picker.style.display = state.unattendedTemplateMode === 'global' ? '' : 'none';
+    }
+    syncTemplatePicker();
+    state.unattendedTemplateId = $('unattended_template_id').value || '';
+    $('unattended_notify_in_app').addEventListener('change', (e) => { state.unattendedNotifyInApp = e.target.checked; });
+    $('unattended_notify_email').addEventListener('change', (e) => { state.unattendedNotifyEmail = e.target.checked; });
 
     document.querySelector('.pill[data-toggle="network"]').addEventListener('click', function () {
         state.networkMode = !state.networkMode;
@@ -1337,6 +1446,18 @@
         const language = LANGUAGES.find((l) => l.id === state.language);
         setPill('language', language ? language.name : '中文', state.language !== 'zh');
 
+        const stopStage = STOP_STAGES.find((s) => s.id === state.stopAtStage);
+        const templateLabel = state.unattendedTemplateMode === 'free'
+            ? ' · 自由模板'
+            : (state.unattendedTemplateMode === 'global' ? ' · 指定模板' : '');
+        setPill(
+            'unattended',
+            state.unattendedMode
+                ? ('无人值守 ' + (stopStage ? stopStage.label : '至 PPT') + templateLabel)
+                : '无人值守',
+            state.unattendedMode
+        );
+
         const urlCount = parseUrls(state.urls).length;
         setPill('files', '附件', state.files.length > 0,
             state.files.length ? ' <span class="pill-count">' + state.files.length + '</span>' : '');
@@ -1418,6 +1539,12 @@
         fd.append('content_source', source);
         fd.append('file_processing_mode', state.fileProcessingMode);
         fd.append('content_analysis_depth', state.contentAnalysisDepth);
+        fd.append('unattended_mode', state.unattendedMode ? 'true' : 'false');
+        fd.append('stop_at_stage', state.stopAtStage);
+        fd.append('unattended_template_mode', state.unattendedTemplateMode);
+        fd.append('unattended_template_id', state.unattendedTemplateMode === 'global' ? String(state.unattendedTemplateId || '') : '');
+        fd.append('unattended_notify_in_app', state.unattendedNotifyInApp ? 'true' : 'false');
+        fd.append('unattended_notify_email', state.unattendedNotifyEmail ? 'true' : 'false');
 
         if (source === 'url') {
             fd.append('content_urls', parseUrls(state.urls).join('\n'));

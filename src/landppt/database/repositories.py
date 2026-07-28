@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, and_, func, or_, inspect, text
 from sqlalchemy.orm import selectinload
 
-from .models import Project, TodoBoard, TodoStage, ProjectVersion, SlideData, PPTTemplate, GlobalMasterTemplate, CreditTransaction, RedemptionCode, User, UserConfig, UserMetrics
+from .models import Project, TodoBoard, TodoStage, ProjectVersion, SlideData, PPTTemplate, GlobalMasterTemplate, CreditTransaction, Notification, RedemptionCode, User, UserConfig, UserMetrics
 from ..api.models import PPTProject, TodoBoard as TodoBoardModel, TodoStage as TodoStageModel
 
 logger = logging.getLogger(__name__)
@@ -160,6 +160,7 @@ class ProjectRepository:
             NarrationAudio,
             Artifact,
             AsyncTask,
+            Notification,
         )
         
         user_id = _effective_user_id(user_id)
@@ -224,7 +225,12 @@ class ProjectRepository:
                 delete(AsyncTask).where(AsyncTask.project_id == project_id)
             )
 
-            # 11. Finally delete the project itself
+            # 11. Delete in-app notifications raised for this project
+            await self.session.execute(
+                delete(Notification).where(Notification.project_id == project_id)
+            )
+
+            # 12. Finally delete the project itself
             await self.session.execute(
                 delete(Project).where(Project.project_id == project_id)
             )
@@ -339,6 +345,70 @@ class ProjectVersionRepository:
         stmt = select(ProjectVersion).where(ProjectVersion.project_id == project_id).order_by(ProjectVersion.version.desc())
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+
+class NotificationRepository:
+    """Repository for in-app Notification operations"""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self, notification_data: Dict[str, Any]) -> Notification:
+        """Create a new notification"""
+        notification = Notification(**notification_data)
+        self.session.add(notification)
+        await self.session.commit()
+        await self.session.refresh(notification)
+        return notification
+
+    async def list_for_user(
+        self,
+        user_id: int,
+        limit: int = 20,
+        unread_only: bool = False,
+    ) -> List[Notification]:
+        """List a user's most recent notifications, newest first."""
+        stmt = select(Notification).where(Notification.user_id == user_id)
+        if unread_only:
+            stmt = stmt.where(Notification.is_read.is_(False))
+        stmt = stmt.order_by(Notification.created_at.desc()).limit(max(1, min(int(limit or 20), 100)))
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def count_unread(self, user_id: int) -> int:
+        """Count a user's unread notifications."""
+        stmt = select(func.count(Notification.id)).where(
+            Notification.user_id == user_id,
+            Notification.is_read.is_(False),
+        )
+        result = await self.session.execute(stmt)
+        return int(result.scalar() or 0)
+
+    async def mark_read(self, notification_id: str, user_id: int) -> bool:
+        """Mark a single notification read. Ownership is enforced."""
+        stmt = (
+            update(Notification)
+            .where(
+                Notification.id == notification_id,
+                Notification.user_id == user_id,
+                Notification.is_read.is_(False),
+            )
+            .values(is_read=True, read_at=time.time())
+        )
+        result = await self.session.execute(stmt)
+        await self.session.commit()
+        return (result.rowcount or 0) > 0
+
+    async def mark_all_read(self, user_id: int) -> int:
+        """Mark every unread notification for a user as read. Returns the count."""
+        stmt = (
+            update(Notification)
+            .where(Notification.user_id == user_id, Notification.is_read.is_(False))
+            .values(is_read=True, read_at=time.time())
+        )
+        result = await self.session.execute(stmt)
+        await self.session.commit()
+        return int(result.rowcount or 0)
 
 
 class SlideDataRepository:

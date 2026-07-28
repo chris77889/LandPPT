@@ -451,6 +451,28 @@ class AsyncTask(Base):
     project: Mapped[Optional["Project"]] = relationship("Project")
 
 
+class Notification(Base):
+    """In-app notification delivered to a single user."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("projects.project_id"), nullable=True, index=True)
+    notification_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    level: Mapped[str] = mapped_column(String(20), default="info", nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    link_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    read_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[float] = mapped_column(Float, default=time.time, nullable=False, index=True)
+
+    user: Mapped["User"] = relationship("User")
+    project: Mapped[Optional["Project"]] = relationship("Project")
+
+
 class CreditTransaction(Base):
     """Credit transaction history for audit trail"""
     __tablename__ = "credit_transactions"
