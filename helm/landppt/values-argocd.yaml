@@ -12,7 +12,7 @@ image:
   # Initial value keeps the current in-cluster local image working.
   # GitHub Actions will update this to ghcr.io/<owner>/landppt on the next source change.
   repository: ghcr.io/sligter/landppt
-  tag: git-bf3759c72e3642216f4d3d39440670becadfd056
+  tag: git-a6d73b83a7a60ca358e334d96bfcc2909b5c290c
   pullPolicy: IfNotPresent
 
 # If the GHCR package is private, create an imagePullSecret in namespace landppt
