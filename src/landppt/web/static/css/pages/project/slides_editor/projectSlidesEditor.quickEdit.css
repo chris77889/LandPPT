@@ -1279,6 +1279,7 @@
     font-size: 0.8rem;
     color: var(--text-primary);
     cursor: pointer;
+    font-family: inherit;
     transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 

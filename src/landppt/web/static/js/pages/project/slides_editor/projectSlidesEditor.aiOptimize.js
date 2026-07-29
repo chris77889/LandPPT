@@ -12,10 +12,13 @@
 
         // 创建美化的AI优化需求输入弹窗
         function showAIOptimizeModal(config) {
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
                 // 创建模态框遮罩
                 const modal = document.createElement('div');
                 modal.className = 'ai-optimize-modal';
+                modal.setAttribute('role', 'dialog');
+                modal.setAttribute('aria-modal', 'true');
+                modal.setAttribute('aria-label', String(config.title || 'AI优化'));
 
                 // 创建弹窗内容
                 const content = document.createElement('div');
@@ -35,11 +38,11 @@
                         <div class="ai-optimize-modal__header-content">
                             <div>
                                 <h3 class="ai-optimize-modal__title">
-                                    <i class="fas fa-magic"></i>${config.title}
+                                    <i class="fas fa-magic"></i><span class="ai-optimize-title"></span>
                                 </h3>
-                                <p class="ai-optimize-modal__subtitle">${config.subtitle}</p>
+                                <p class="ai-optimize-modal__subtitle"></p>
                             </div>
-                            <button type="button" class="ai-optimize-modal__close" onclick="this.closest('.ai-optimize-modal').remove()" aria-label="关闭">
+                            <button type="button" class="ai-optimize-modal__close" aria-label="关闭">
                                 <span aria-hidden="true">×</span>
                             </button>
                         </div>
@@ -49,15 +52,15 @@
                         <div class="current-info">
                             <div>
                                 <strong><i class="fas fa-info-circle"></i> 当前内容</strong><br>
-                                ${config.currentInfo}
+                                <span class="ai-optimize-current-info" style="white-space: pre-line;"></span>
                             </div>
                         </div>
 
                         <div class="input-group">
-                            <label class="input-label" for="aiOptimizeInput">
+                            <label class="input-label">
                                 <i class="fas fa-edit"></i> 请描述您的优化需求
                             </label>
-                            <textarea id="aiOptimizeInput" class="input-textarea" placeholder="详细描述您希望如何优化此内容...
+                            <textarea class="input-textarea ai-optimize-input" aria-label="优化需求" placeholder="详细描述您希望如何优化此内容...
 
 例如：
 - 增加更多技术细节
@@ -69,9 +72,7 @@
                             <label class="suggestion-label">
                                 <i class="fas fa-lightbulb"></i> 点击快捷建议快速填充
                             </label>
-                            <div class="suggestion-list">
-                                ${suggestions.map(s => `<span class="suggestion-tag" onclick="document.getElementById('aiOptimizeInput').value = '${s}'">${s}</span>`).join('')}
-                            </div>
+                            <div class="suggestion-list"></div>
                         </div>
                     </div>
 
@@ -80,47 +81,85 @@
                             <i class="fas fa-robot"></i> AI将根据您的需求智能优化内容
                         </div>
                         <div class="footer-actions">
-                            <button type="button" class="outline-modal-btn" onclick="this.closest('.ai-optimize-modal').remove()">
+                            <button type="button" class="outline-modal-btn ai-optimize-cancel">
                                 <i class="fas fa-times"></i><span>取消</span>
                             </button>
-                            <button type="button" id="confirmOptimizeBtn" class="outline-modal-btn outline-modal-btn--solid">
+                            <button type="button" class="outline-modal-btn outline-modal-btn--solid ai-optimize-confirm">
                                 <i class="fas fa-magic"></i><span>开始优化</span>
                             </button>
                         </div>
                     </div>
                 `;
 
-                modal.appendChild(content);
-                document.body.appendChild(modal);
+                const previousFocus = document.activeElement;
+                const input = content.querySelector('.ai-optimize-input');
+                const confirmBtn = content.querySelector('.ai-optimize-confirm');
+                const currentInfoElement = content.querySelector('.ai-optimize-current-info');
+                content.querySelector('.ai-optimize-title').textContent = String(config.title || '');
+                content.querySelector('.ai-optimize-modal__subtitle').textContent = String(config.subtitle || '');
+                currentInfoElement.textContent = String(config.currentInfo || '');
 
-                // 聚焦输入框
-                setTimeout(() => {
-                    const input = document.getElementById('aiOptimizeInput');
-                    if (input) input.focus();
-                }, 100);
-
-                // 点击背景关闭
-                modal.addEventListener('click', (e) => {
-                    if (e.target === modal) {
-                        modal.remove();
-                        reject('用户取消');
-                    }
+                const suggestionList = content.querySelector('.suggestion-list');
+                suggestions.forEach((suggestion) => {
+                    const suggestionButton = document.createElement('button');
+                    suggestionButton.type = 'button';
+                    suggestionButton.className = 'suggestion-tag';
+                    suggestionButton.textContent = String(suggestion);
+                    suggestionButton.addEventListener('click', () => {
+                        input.value = String(suggestion);
+                        input.focus();
+                    });
+                    suggestionList.appendChild(suggestionButton);
                 });
 
-                // 确认按钮
-                const confirmBtn = document.getElementById('confirmOptimizeBtn');
-                confirmBtn.onclick = () => {
-                    const input = document.getElementById('aiOptimizeInput');
-                    const value = input?.value.trim();
-                    if (!value) {
-                        // 输入框抖动动画（通过 class 触发，动画定义在 quickEdit.css）
-                        input.classList.add('shake');
-                        setTimeout(() => { input.classList.remove('shake'); }, 500);
+                let closed = false;
+                function closeModal(value = null) {
+                    if (closed) return;
+                    closed = true;
+                    document.removeEventListener('keydown', handleKeydown);
+                    modal.remove();
+                    previousFocus?.focus?.();
+                    resolve(value);
+                }
+
+                function handleKeydown(event) {
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeModal();
                         return;
                     }
-                    modal.remove();
-                    resolve(value);
-                };
+                    if (event.key !== 'Tab') return;
+                    const focusable = content.querySelectorAll('button:not([disabled]), textarea:not([disabled])');
+                    const first = focusable[0];
+                    const last = focusable[focusable.length - 1];
+                    if (event.shiftKey && document.activeElement === first) {
+                        event.preventDefault();
+                        last.focus();
+                    } else if (!event.shiftKey && document.activeElement === last) {
+                        event.preventDefault();
+                        first.focus();
+                    }
+                }
+
+                content.querySelector('.ai-optimize-modal__close').addEventListener('click', () => closeModal());
+                content.querySelector('.ai-optimize-cancel').addEventListener('click', () => closeModal());
+                modal.addEventListener('click', (event) => {
+                    if (event.target === modal) closeModal();
+                });
+                confirmBtn.addEventListener('click', () => {
+                    const value = input.value.trim();
+                    if (!value) {
+                        input.classList.add('shake');
+                        setTimeout(() => input.classList.remove('shake'), 500);
+                        return;
+                    }
+                    closeModal(value);
+                });
+
+                modal.appendChild(content);
+                document.body.appendChild(modal);
+                document.addEventListener('keydown', handleKeydown);
+                requestAnimationFrame(() => input.focus());
             });
         }
 
@@ -153,7 +192,7 @@
                 userRequest = await showAIOptimizeModal({
                     title: `AI优化 - 第${currentSlideIndex + 1}页`,
                     subtitle: '让AI帮助您优化这一页的内容',
-                    currentInfo: `<strong>标题：</strong>${title}<br><strong>类型：</strong>${slideType}<br><strong>内容要点：</strong>${contentPoints.length}个`,
+                    currentInfo: `标题：${title}\n类型：${slideType}\n内容要点：${contentPoints.length}个`,
                     suggestions: [
                         '增加更多技术细节和实例',
                         '简化内容，突出核心要点',

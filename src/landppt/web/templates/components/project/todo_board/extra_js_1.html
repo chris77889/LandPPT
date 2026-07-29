@@ -5423,13 +5423,17 @@
 
     // 创建美化的AI优化需求输入弹窗
     function showAIOptimizeModal(config) {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             // 创建模态框遮罩
             const modal = document.createElement('div');
             modal.className = 'ai-optimize-modal';
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.setAttribute('aria-label', String(config.title || 'AI优化'));
             modal.style.cssText = `
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255, 255, 255, 0.98);
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
             z-index: 10000; display: flex; align-items: center; justify-content: center;
             padding: 20px; animation: fadeIn 0.3s ease;
         `;
@@ -5475,6 +5479,7 @@
                     cursor: pointer;
                     transition: all 0.3s ease;
                     border: 1px solid #111;
+                    font-family: inherit;
                 }
                 .ai-optimize-modal .suggestion-tag:hover {
                     transform: translateY(-2px);
@@ -5486,6 +5491,14 @@
                     border-color: #111;
                     box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.1);
                 }
+                .ai-optimize-modal textarea.shake {
+                    animation: aiOptimizeShake 0.5s;
+                }
+                @keyframes aiOptimizeShake {
+                    0%, 100% { transform: translateX(0); }
+                    25% { transform: translateX(-10px); }
+                    75% { transform: translateX(10px); }
+                }
             </style>
 
             <!-- 头部 -->
@@ -5494,11 +5507,11 @@
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div>
                             <h3 style="margin: 0 0 8px 0; font-size: 1.3em; font-weight: 700;">
-                                <i class="fas fa-magic" style="margin-right: 10px;"></i>${config.title}
+                                <i class="fas fa-magic" style="margin-right: 10px;"></i><span class="ai-optimize-title"></span>
                             </h3>
-                            <p style="margin: 0; opacity: 0.9; font-size: 0.9em;">${config.subtitle}</p>
+                            <p class="ai-optimize-subtitle" style="margin: 0; opacity: 0.9; font-size: 0.9em;"></p>
                         </div>
-                        <button onclick="this.closest('.ai-optimize-modal').remove()" style="background: transparent; color: #fff; border: 1px solid #fff; border-radius: 50%; width: 36px; height: 36px; cursor: pointer; font-size: 20px; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;" onmouseover="this.style.background='rgba(255, 255, 255, 0.2)'" onmouseout="this.style.background='transparent'">
+                        <button type="button" class="ai-optimize-modal__close" aria-label="关闭" style="background: transparent; color: #fff; border: 1px solid #fff; border-radius: 50%; width: 36px; height: 36px; cursor: pointer; font-size: 20px; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center;" onmouseover="this.style.background='rgba(255, 255, 255, 0.2)'" onmouseout="this.style.background='transparent'">
                             ×
                         </button>
                     </div>
@@ -5511,7 +5524,7 @@
                 <div style="background: #f5f5f5; border-left: 4px solid #111; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                     <div style="color: #111; font-size: 0.9em; line-height: 1.6;">
                         <strong style="color: #111;"><i class="fas fa-info-circle"></i> 当前内容</strong><br>
-                        ${config.currentInfo}
+                        <span class="ai-optimize-current-info" style="white-space: pre-line;"></span>
                     </div>
                 </div>
 
@@ -5520,7 +5533,7 @@
                     <label style="display: block; margin-bottom: 10px; color: #111; font-weight: 600; font-size: 0.95em;">
                         <i class="fas fa-edit"></i> 请描述您的优化需求
                     </label>
-                    <textarea id="aiOptimizeInput" style="width: 100%; min-height: 120px; padding: 15px; border: 2px solid #d9d9d9; border-radius: 10px; font-size: 14px; resize: vertical; font-family: inherit; transition: all 0.3s ease; background: #fff; color: #111;" placeholder="详细描述您希望如何优化此内容...\n\n例如：\n- 增加更多技术细节\n- 重新组织逻辑结构\n- 添加案例分析"></textarea>
+                    <textarea class="ai-optimize-input" aria-label="优化需求" style="width: 100%; min-height: 120px; padding: 15px; border: 2px solid #d9d9d9; border-radius: 10px; font-size: 14px; resize: vertical; font-family: inherit; transition: all 0.3s ease; background: #fff; color: #111;" placeholder="详细描述您希望如何优化此内容...\n\n例如：\n- 增加更多技术细节\n- 重新组织逻辑结构\n- 添加案例分析"></textarea>
                 </div>
 
                 <!-- 快捷建议 -->
@@ -5528,9 +5541,7 @@
                     <label style="display: block; margin-bottom: 10px; color: #555; font-size: 0.85em;">
                         <i class="fas fa-lightbulb"></i> 点击快捷建议快速填充
                     </label>
-                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                        ${suggestions.map(s => `<span class="suggestion-tag" onclick="document.getElementById('aiOptimizeInput').value = '${s}'">${s}</span>`).join('')}
-                    </div>
+                    <div class="ai-optimize-suggestion-list" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
                 </div>
             </div>
 
@@ -5540,58 +5551,85 @@
                     <i class="fas fa-robot"></i> AI将根据您的需求智能优化内容
                 </div>
                 <div style="display: flex; gap: 10px;">
-                    <button onclick="this.closest('.ai-optimize-modal').remove()" class="btn btn-sm" style="background: #fff; color: #111; padding: 10px 20px; border: 1px solid #111;">
+                    <button type="button" class="btn btn-sm ai-optimize-cancel" style="background: #fff; color: #111; padding: 10px 20px; border: 1px solid #111;">
                         <i class="fas fa-times"></i> 取消
                     </button>
-                    <button id="confirmOptimizeBtn" class="btn btn-sm" style="background: #111; color: #fff; padding: 10px 24px; border: 1px solid #111;">
+                    <button type="button" class="btn btn-sm ai-optimize-confirm" style="background: #111; color: #fff; padding: 10px 24px; border: 1px solid #111;">
                         <i class="fas fa-magic"></i> 开始优化
                     </button>
                 </div>
             </div>
         `;
 
-            modal.appendChild(content);
-            document.body.appendChild(modal);
+            const previousFocus = document.activeElement;
+            const input = content.querySelector('.ai-optimize-input');
+            const confirmBtn = content.querySelector('.ai-optimize-confirm');
+            const currentInfoElement = content.querySelector('.ai-optimize-current-info');
+            content.querySelector('.ai-optimize-title').textContent = String(config.title || '');
+            content.querySelector('.ai-optimize-subtitle').textContent = String(config.subtitle || '');
+            currentInfoElement.textContent = String(config.currentInfo || '');
 
-            // 聚焦输入框
-            setTimeout(() => {
-                const input = document.getElementById('aiOptimizeInput');
-                if (input) input.focus();
-            }, 100);
-
-            // 点击背景关闭
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    modal.remove();
-                    reject('用户取消');
-                }
+            const suggestionList = content.querySelector('.ai-optimize-suggestion-list');
+            suggestions.forEach((suggestion) => {
+                const suggestionButton = document.createElement('button');
+                suggestionButton.type = 'button';
+                suggestionButton.className = 'suggestion-tag';
+                suggestionButton.textContent = String(suggestion);
+                suggestionButton.addEventListener('click', () => {
+                    input.value = String(suggestion);
+                    input.focus();
+                });
+                suggestionList.appendChild(suggestionButton);
             });
 
-            // 确认按钮
-            const confirmBtn = document.getElementById('confirmOptimizeBtn');
-            confirmBtn.onclick = () => {
-                const input = document.getElementById('aiOptimizeInput');
-                const value = input?.value.trim();
-                if (!value) {
-                    // 输入框抖动动画
-                    input.style.animation = 'shake 0.5s';
-                    setTimeout(() => { input.style.animation = ''; }, 500);
+            let closed = false;
+            function closeModal(value = null) {
+                if (closed) return;
+                closed = true;
+                document.removeEventListener('keydown', handleKeydown);
+                modal.remove();
+                previousFocus?.focus?.();
+                resolve(value);
+            }
+
+            function handleKeydown(event) {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeModal();
                     return;
                 }
-                modal.remove();
-                resolve(value);
-            };
-
-            // 添加shake动画
-            const style = document.createElement('style');
-            style.textContent = `
-            @keyframes shake {
-                0%, 100% { transform: translateX(0); }
-                25% { transform: translateX(-10px); }
-                75% { transform: translateX(10px); }
+                if (event.key !== 'Tab') return;
+                const focusable = content.querySelectorAll('button:not([disabled]), textarea:not([disabled])');
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
             }
-        `;
-            document.head.appendChild(style);
+
+            content.querySelector('.ai-optimize-modal__close').addEventListener('click', () => closeModal());
+            content.querySelector('.ai-optimize-cancel').addEventListener('click', () => closeModal());
+            modal.addEventListener('click', (event) => {
+                if (event.target === modal) closeModal();
+            });
+            confirmBtn.addEventListener('click', () => {
+                const value = input.value.trim();
+                if (!value) {
+                    input.classList.add('shake');
+                    setTimeout(() => input.classList.remove('shake'), 500);
+                    return;
+                }
+                closeModal(value);
+            });
+
+            modal.appendChild(content);
+            document.body.appendChild(modal);
+            document.addEventListener('keydown', handleKeydown);
+            requestAnimationFrame(() => input.focus());
         });
     }
 
@@ -5633,7 +5671,7 @@
             userRequest = await showAIOptimizeModal({
                 title: `AI优化 - 第${slideIndex + 1}页`,
                 subtitle: '让AI帮助您优化这一页的内容',
-                currentInfo: `<strong>标题：</strong>${escapeHtml(title)}<br>${subtitle ? `<strong>副标题：</strong>${escapeHtml(subtitle)}<br>` : ''}<strong>类型：</strong>${escapeHtml(slideType)}<br><strong>内容要点：</strong>${contentPoints.length}个`,
+                currentInfo: `标题：${title}\n${subtitle ? `副标题：${subtitle}\n` : ''}类型：${slideType}\n内容要点：${contentPoints.length}个`,
                 suggestions: [
                     '增加更多技术细节和实例',
                     '简化内容，突出核心要点',
@@ -5792,7 +5830,7 @@
             userRequest = await showAIOptimizeModal({
                 title: '优化大纲',
                 subtitle: '让AI帮助您优化整个PPT大纲结构和内容',
-                currentInfo: `<strong>大纲标题：</strong>${escapeHtml(parsedOutline.title)}<br><strong>幻灯片数量：</strong>${parsedOutline.slides ? parsedOutline.slides.length : 0} 页<br><strong>场景：</strong>${escapeHtml(parsedOutline.metadata?.scenario) || '通用'}`,
+                currentInfo: `大纲标题：${parsedOutline.title || ''}\n幻灯片数量：${parsedOutline.slides ? parsedOutline.slides.length : 0} 页\n场景：${parsedOutline.metadata?.scenario || '通用'}`,
                 suggestions: [
                     '增加更多文字说明',
                     '重新组织结构，优化逻辑流程',

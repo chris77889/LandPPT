@@ -335,3 +335,32 @@ def test_editor_sidebar_thumbnail_refresh_recalculates_scale_without_overriding_
     assert "aspect-ratio: 16 / 9;" in css
     assert "height: 95px" not in css
     assert "scale(0.1875)" in css
+
+
+def test_ai_optimize_modals_settle_safely_and_use_scoped_dom():
+    sources = [
+        _read("src/landppt/web/templates/components/project/todo_board/extra_js_1.html"),
+        _read("src/landppt/web/templates/components/project/detail/extra_js_1.html"),
+        _read(
+            "src/landppt/web/static/js/pages/project/slides_editor/"
+            "projectSlidesEditor.aiOptimize.js"
+        ),
+    ]
+
+    for source in sources:
+        assert "function closeModal(value = null)" in source
+        assert "content.querySelector('.ai-optimize-input')" in source
+        assert "suggestionButton.textContent = String(suggestion)" in source
+        assert "currentInfoElement.textContent = String(config.currentInfo || '')" in source
+        assert "document.addEventListener('keydown', handleKeydown)" in source
+        assert ".ai-optimize-modal__close').addEventListener('click', () => closeModal())" in source
+        assert ".ai-optimize-cancel').addEventListener('click', () => closeModal())" in source
+        assert "if (event.target === modal) closeModal()" in source
+        assert 'id="aiOptimizeInput"' not in source
+        assert 'id="confirmOptimizeBtn"' not in source
+        assert "${suggestions.map" not in source
+        assert "${config.currentInfo}" not in source
+        assert "onclick=\"this.closest('.ai-optimize-modal').remove()\"" not in source
+
+    assert "document.head.appendChild(style)" not in sources[0]
+    assert "document.head.appendChild(style)" not in sources[1]
