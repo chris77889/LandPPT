@@ -410,8 +410,7 @@
                         setTimeout(() => {
                             closeProgressToast(progressToast);
                             showNotification('演讲稿生成完成！', 'success');
-                            console.log('Starting to poll for speech scripts...');
-                            pollForSpeechScripts();
+                            showCurrentSpeechScripts();
                         }, 500);
                         return true;
                     }
@@ -465,14 +464,11 @@
                             clearInterval(interval);
                             updateProgressToast(progressToast, progress.message, 100);
 
-                            // Close progress toast and start polling for data
+                            // Close progress toast and display the committed scripts
                             setTimeout(() => {
                                 closeProgressToast(progressToast);
                                 showNotification('演讲稿生成完成！', 'success');
-
-                                // 使用轮询机制等待数据库数据可用
-                                console.log('Starting to poll for speech scripts...');
-                                pollForSpeechScripts();
+                                showCurrentSpeechScripts();
                             }, 500);
 
                         } else if (progress.status === 'failed') {
@@ -716,7 +712,7 @@
                         generation_type: generationType,
                         slide_indices: slideIndices,
                         customization: customization,
-                        language: (document.getElementById('speechLanguage')?.value || 'zh')
+                        language: languageValue
                     })
                 });
 

@@ -12,6 +12,7 @@
             // 检查图片服务状态
             checkImageServiceStatus();
             initOpenAIReasoningControls();
+            initAnthropicReasoningControls();
             pruneEmptyProviderFormGroups();
             bindSearxngHostSync();
         });
@@ -280,6 +281,24 @@
             syncOpenAIReasoningControls();
         }
 
+        function syncAnthropicReasoningControls() {
+            const reasoningToggle = document.querySelector('input[name="anthropic_enable_reasoning"]');
+            const reasoningEffortSelect = document.querySelector('select[name="anthropic_reasoning_effort"]');
+            if (!reasoningToggle || !reasoningEffortSelect) return;
+
+            reasoningEffortSelect.disabled = !reasoningToggle.checked;
+            reasoningEffortSelect.style.opacity = reasoningToggle.checked ? '1' : '0.65';
+        }
+
+        function initAnthropicReasoningControls() {
+            const reasoningToggle = document.querySelector('input[name="anthropic_enable_reasoning"]');
+            if (reasoningToggle && reasoningToggle.dataset.bound !== 'true') {
+                reasoningToggle.addEventListener('change', syncAnthropicReasoningControls);
+                reasoningToggle.dataset.bound = 'true';
+            }
+            syncAnthropicReasoningControls();
+        }
+
         function pruneEmptyProviderFormGroups() {
             document.querySelectorAll('.provider-accordion-item .provider-content .form-group').forEach(group => {
                 const hasControl = group.querySelector('input, select, textarea, .model-select-wrapper, .model-dropdown');
@@ -361,6 +380,7 @@
 
             enhanceOpenAIProviderUI();
             syncOpenAIReasoningControls();
+            syncAnthropicReasoningControls();
             pruneEmptyProviderFormGroups();
         }
 
@@ -1619,6 +1639,15 @@
                         payload.enable_reasoning = reasoningToggleInput.checked;
                     }
                     const reasoningEffortInput = document.querySelector('select[name="openai_reasoning_effort"]');
+                    if (reasoningEffortInput?.value) {
+                        payload.reasoning_effort = reasoningEffortInput.value;
+                    }
+                } else if (provider === 'anthropic') {
+                    const reasoningToggleInput = document.querySelector('input[name="anthropic_enable_reasoning"]');
+                    if (reasoningToggleInput) {
+                        payload.enable_reasoning = reasoningToggleInput.checked;
+                    }
+                    const reasoningEffortInput = document.querySelector('select[name="anthropic_reasoning_effort"]');
                     if (reasoningEffortInput?.value) {
                         payload.reasoning_effort = reasoningEffortInput.value;
                     }

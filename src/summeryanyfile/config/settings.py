@@ -38,6 +38,8 @@ class Settings:
     openai_enable_reasoning: bool = False
     openai_reasoning_effort: str = "medium"
     anthropic_api_key: Optional[str] = None
+    anthropic_enable_reasoning: bool = False
+    anthropic_reasoning_effort: str = "high"
     azure_openai_api_key: Optional[str] = None
     azure_openai_endpoint: Optional[str] = None
     azure_openai_api_version: str = "2024-02-15-preview"
@@ -68,8 +70,16 @@ class Settings:
             max_tokens=self.max_tokens,
             target_language=target_language,
             use_responses_api=self.openai_use_responses_api if self.llm_provider == "openai" else False,
-            enable_reasoning=self.openai_enable_reasoning if self.llm_provider == "openai" else False,
-            reasoning_effort=self.openai_reasoning_effort if self.llm_provider == "openai" else "medium",
+            enable_reasoning=(
+                self.openai_enable_reasoning if self.llm_provider == "openai"
+                else self.anthropic_enable_reasoning if self.llm_provider == "anthropic"
+                else False
+            ),
+            reasoning_effort=(
+                self.openai_reasoning_effort if self.llm_provider == "openai"
+                else self.anthropic_reasoning_effort if self.llm_provider == "anthropic"
+                else "medium"
+            ),
         )
     
     def get_llm_kwargs(self) -> Dict[str, Any]:
@@ -89,6 +99,9 @@ class Settings:
         elif self.llm_provider == "anthropic":
             if self.anthropic_api_key:
                 kwargs["api_key"] = self.anthropic_api_key
+            if self.anthropic_enable_reasoning:
+                kwargs["enable_reasoning"] = True
+                kwargs["reasoning_effort"] = self.anthropic_reasoning_effort
             # 检查环境变量中的ANTHROPIC_BASE_URL
             anthropic_base_url = os.getenv("ANTHROPIC_BASE_URL")
             if anthropic_base_url:
@@ -193,6 +206,8 @@ def load_settings(
         "OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
         "OPENAI_MODEL": "llm_model",  # 支持OPENAI_MODEL环境变量
         "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "ANTHROPIC_ENABLE_REASONING": "anthropic_enable_reasoning",
+        "ANTHROPIC_REASONING_EFFORT": "anthropic_reasoning_effort",
         "AZURE_OPENAI_API_KEY": "azure_openai_api_key",
         "AZURE_OPENAI_ENDPOINT": "azure_openai_endpoint",
         "AZURE_OPENAI_API_VERSION": "azure_openai_api_version",
@@ -225,7 +240,12 @@ def load_settings(
                 except ValueError:
                     logger.warning(f"无效的浮点值 {env_key}={env_value}")
                     continue
-            elif attr_name in {"debug_mode", "openai_use_responses_api", "openai_enable_reasoning"}:
+            elif attr_name in {
+                "debug_mode",
+                "openai_use_responses_api",
+                "openai_enable_reasoning",
+                "anthropic_enable_reasoning",
+            }:
                 env_value = env_value.lower() in ("true", "1", "yes", "on")
             
             setattr(settings, attr_name, env_value)
@@ -266,6 +286,8 @@ def create_env_template():
 OPENAI_API_KEY=your_openai_api_key_here
 # OPENAI_BASE_URL=https://api.openai.com/v1  # 自定义OpenAI API端点（可选）
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+ANTHROPIC_ENABLE_REASONING=false
+ANTHROPIC_REASONING_EFFORT=high
 
 # Azure OpenAI (if using Azure)
 AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here

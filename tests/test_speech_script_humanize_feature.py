@@ -162,4 +162,4 @@ def test_speech_script_humanize_route_and_ui_are_wired():
     assert "showProgressToast(`正在处理第${slideIndex + 1}页演讲稿人话化...`, 0)" in js_text
     assert "speech-script-humanize-btn" in js_text
     assert "speechHumanizeAllBtn" in js_text
-    assert "projectSlidesEditor.speechScriptsManage.js?v=20260509-custom-tts-api-v1" in template_text
+    assert "projectSlidesEditor.speechScriptsManage.js?v=20260802-auto-result-v1" in template_text

@@ -106,10 +106,10 @@ async def test_openai_provider_chat_completion_uses_responses_api(monkeypatch):
         {
             "api_key": "test-key",
             "base_url": "https://api.openai.com/v1",
-            "model": "gpt-4.1",
+            "model": "gpt-5.6",
             "use_responses_api": True,
             "enable_reasoning": True,
-            "reasoning_effort": "high",
+            "reasoning_effort": "max",
         }
     )
 
@@ -123,7 +123,7 @@ async def test_openai_provider_chat_completion_uses_responses_api(monkeypatch):
     assert response.metadata["transport"] == "responses"
     assert len(instances) == 1
     assert instances[0].responses.create_calls[0]["input"][0]["content"] == "hello"
-    assert instances[0].responses.create_calls[0]["reasoning"] == {"effort": "high"}
+    assert instances[0].responses.create_calls[0]["reasoning"] == {"effort": "max"}
     assert "max_output_tokens" not in instances[0].responses.create_calls[0]
 
 

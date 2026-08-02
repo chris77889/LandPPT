@@ -76,6 +76,8 @@ class AIConfig(BaseSettings):
     anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
     anthropic_base_url: str = Field(default="https://api.anthropic.com", env="ANTHROPIC_BASE_URL")
     anthropic_model: str = Field(default="claude-3-haiku-20240307", env="ANTHROPIC_MODEL")
+    anthropic_enable_reasoning: bool = Field(default=False, env="ANTHROPIC_ENABLE_REASONING")
+    anthropic_reasoning_effort: str = Field(default="high", env="ANTHROPIC_REASONING_EFFORT")
 
     # Google Gemini Configuration
     google_api_key: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
@@ -298,6 +300,8 @@ class AIConfig(BaseSettings):
                 "api_key": self.anthropic_api_key,
                 "base_url": self.anthropic_base_url,
                 "model": self.anthropic_model,
+                "enable_reasoning": self.anthropic_enable_reasoning,
+                "reasoning_effort": self.anthropic_reasoning_effort,
                 "max_tokens": self.max_tokens,
                 "temperature": self.temperature,
                 "top_p": self.top_p,
@@ -424,6 +428,14 @@ def reload_ai_config():
     ai_config.anthropic_api_key = os.environ.get('ANTHROPIC_API_KEY', ai_config.anthropic_api_key)
     ai_config.anthropic_base_url = os.environ.get('ANTHROPIC_BASE_URL', ai_config.anthropic_base_url)
     ai_config.anthropic_model = os.environ.get('ANTHROPIC_MODEL', ai_config.anthropic_model)
+    ai_config.anthropic_enable_reasoning = os.environ.get(
+        'ANTHROPIC_ENABLE_REASONING',
+        str(ai_config.anthropic_enable_reasoning),
+    ).lower() == 'true'
+    ai_config.anthropic_reasoning_effort = os.environ.get(
+        'ANTHROPIC_REASONING_EFFORT',
+        ai_config.anthropic_reasoning_effort,
+    )
     ai_config.google_api_key = os.environ.get('GOOGLE_API_KEY', ai_config.google_api_key)
     ai_config.google_base_url = os.environ.get('GOOGLE_BASE_URL', ai_config.google_base_url)
     ai_config.google_model = os.environ.get('GOOGLE_MODEL', ai_config.google_model)

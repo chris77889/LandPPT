@@ -280,10 +280,6 @@ function getNarrationLanguage() {
 
         async function exportNarrationVideo() {
             try {
-                // Open a blank tab synchronously (user gesture) to avoid popup blockers when we later
-                // navigate to the download URL after async task completion.
-                const downloadWindow = window.open('about:blank', '_blank');
-
                 const lang = getNarrationLanguage();
                 const fps = getNarrationFps();
                 const renderMode = getNarrationRenderMode();
@@ -322,27 +318,10 @@ function getNarrationLanguage() {
 
                 closeProgressToast(progressToast);
                 const downloadUrl = taskData.download_url || `/api/landppt/tasks/${taskId}/download`;
-                if (downloadWindow && !downloadWindow.closed) {
-                    try {
-                        downloadWindow.location.href = downloadUrl;
-                        setTimeout(() => {
-                            try { downloadWindow.close(); } catch (_) { }
-                        }, 3000);
-                    } catch (_) {
-                        // Fall back to same-tab download trigger
-                        if (typeof triggerFileDownload === 'function') {
-                            triggerFileDownload(downloadUrl);
-                        } else {
-                            window.location.href = downloadUrl;
-                        }
-                    }
+                if (typeof triggerFileDownload === 'function') {
+                    triggerFileDownload(downloadUrl);
                 } else {
-                    // Pop-up blocked: use same-tab download trigger.
-                    if (typeof triggerFileDownload === 'function') {
-                        triggerFileDownload(downloadUrl);
-                    } else {
-                        window.location.href = downloadUrl;
-                    }
+                    window.location.href = downloadUrl;
                 }
                 showNotification('讲解视频导出完成，已开始下载', 'success');
             } catch (error) {

@@ -36,6 +36,12 @@ def test_anthropic_test_payload_does_not_set_output_token_limit():
     assert "max_tokens" not in payload
 
 
+def test_anthropic_test_payload_sets_reasoning_effort():
+    payload = build_anthropic_test_payload("Hi", "xhigh")
+
+    assert payload["output_config"] == {"effort": "xhigh"}
+
+
 def test_extract_google_test_result_reads_text_and_usage():
     response_text, usage = extract_google_test_result(
         {

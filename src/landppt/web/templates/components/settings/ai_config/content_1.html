@@ -178,6 +178,7 @@
                                     <option value="medium" {% if openai_reasoning_effort == 'medium' %}selected{% endif %}>medium</option>
                                     <option value="high" {% if openai_reasoning_effort == 'high' %}selected{% endif %}>high</option>
                                     <option value="xhigh" {% if openai_reasoning_effort == 'xhigh' %}selected{% endif %}>xhigh</option>
+                                    <option value="max" {% if openai_reasoning_effort == 'max' %}selected{% endif %}>max</option>
                                 </select>
                                 <div style="margin-top: 6px; color: #777; font-size: 0.82em;">
                                     不同 OpenAI 模型支持的档位不同；若模型不支持，测试或调用会返回参数错误。
@@ -214,6 +215,33 @@
                                     value="{{ current_config.get('anthropic_base_url', '') }}"
                                     placeholder="https://api.anthropic.com"
                                     style="width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9em;">
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <label
+                                    style="display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 0.9em; color: #333;">
+                                    <input type="checkbox" name="anthropic_enable_reasoning" {% if
+                                        current_config.get('anthropic_enable_reasoning') %}checked{% endif %}>
+                                    <span>启用推理程度参数</span>
+                                </label>
+                                <div style="margin-top: 6px; color: #777; font-size: 0.82em;">
+                                    开启后会在 Anthropic 请求中附带 output_config.effort；关闭时保持模型默认行为。
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <label
+                                    style="font-size: 0.85em; color: #555; margin-bottom: 4px; display: block;">推理程度</label>
+                                {% set anthropic_reasoning_effort = current_config.get('anthropic_reasoning_effort', 'high') %}
+                                <select name="anthropic_reasoning_effort" {% if not current_config.get('anthropic_enable_reasoning') %}disabled{% endif %}
+                                    style="width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9em; background: #fff;">
+                                    <option value="low" {% if anthropic_reasoning_effort == 'low' %}selected{% endif %}>low</option>
+                                    <option value="medium" {% if anthropic_reasoning_effort == 'medium' %}selected{% endif %}>medium</option>
+                                    <option value="high" {% if anthropic_reasoning_effort == 'high' %}selected{% endif %}>high</option>
+                                    <option value="xhigh" {% if anthropic_reasoning_effort == 'xhigh' %}selected{% endif %}>xhigh</option>
+                                    <option value="max" {% if anthropic_reasoning_effort == 'max' %}selected{% endif %}>max</option>
+                                </select>
+                                <div style="margin-top: 6px; color: #777; font-size: 0.82em;">
+                                    不同 Anthropic 模型支持的档位不同；若模型不支持，测试或调用会返回参数错误。
+                                </div>
                             </div>
                             <div class="form-group" style="margin: 0;">
                                 <label

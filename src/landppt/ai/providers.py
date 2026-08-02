@@ -104,7 +104,7 @@ def strip_think_content(content: str) -> str:
 class OpenAIProvider(AIProvider):
     """OpenAI API provider"""
 
-    SUPPORTED_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    SUPPORTED_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -576,8 +576,12 @@ class AzureOpenAIProvider(OpenAIProvider):
 class AnthropicProvider(AIProvider):
     """Anthropic Claude API provider"""
 
+    SUPPORTED_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        self.enable_reasoning = OpenAIProvider._coerce_bool(config.get("enable_reasoning"))
+        self.reasoning_effort = self._normalize_reasoning_effort(config.get("reasoning_effort")) or "high"
         try:
             import anthropic
             base_url = config.get("base_url")
@@ -603,6 +607,24 @@ class AnthropicProvider(AIProvider):
         except ImportError:
             logger.warning("Anthropic library not installed. Install with: pip install anthropic")
             self.client = None
+
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        return normalized if normalized in cls.SUPPORTED_REASONING_EFFORTS else None
+
+    def _apply_reasoning_config(self, request_kwargs: Dict[str, Any], config: Dict[str, Any]) -> None:
+        if not OpenAIProvider._coerce_bool(config.get("enable_reasoning", self.enable_reasoning)):
+            return
+
+        effort = (
+            self._normalize_reasoning_effort(config.get("reasoning_effort"))
+            or self.reasoning_effort
+            or "high"
+        )
+        request_kwargs["output_config"] = {"effort": effort}
 
     def _convert_message_to_anthropic(self, message: AIMessage) -> Dict[str, Any]:
         """Convert AIMessage to Anthropic format, supporting multimodal content"""
@@ -769,6 +791,8 @@ class AnthropicProvider(AIProvider):
                 if name:
                     request_kwargs["tool_choice"] = {"type": "tool", "name": name}
 
+            self._apply_reasoning_config(request_kwargs, config)
+
             try:
                 response = await self.client.messages.create(**request_kwargs)
                 content, tool_calls, finish_reason, usage = self._extract_anthropic_response(response)
@@ -866,6 +890,7 @@ class AnthropicProvider(AIProvider):
             }
             if system_message:
                 body["system"] = system_message
+            self._apply_reasoning_config(body, config)
 
             # Try both authentication methods
             auth_methods = [

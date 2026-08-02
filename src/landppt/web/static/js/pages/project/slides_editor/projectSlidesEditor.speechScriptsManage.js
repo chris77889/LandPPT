@@ -973,49 +973,6 @@
             }
         }
 
-        async function pollForSpeechScripts() {
-            const maxAttempts = 30; // 最多尝试30次
-            const pollInterval = 1000; // 每1000ms查询一次
-            let attempts = 0;
-
-            const poll = async () => {
-                attempts++;
-                console.log(`Polling attempt ${attempts}/${maxAttempts}...`);
-
-                try {
-                    const lang = getSpeechLanguage();
-                    const response = await fetch(`/api/projects/${window.landpptEditorConfig.projectId}/speech-scripts?language=${encodeURIComponent(lang)}`);
-                    const result = await response.json();
-
-                    if (result.success && result.scripts && result.scripts.length > 0) {
-                        console.log(`Found ${result.scripts.length} scripts, displaying...`);
-                        // 找到数据，显示演讲稿
-                        showCurrentSpeechScripts();
-                        return;
-                    }
-
-                    // 如果还没到最大尝试次数，继续轮询
-                    if (attempts < maxAttempts) {
-                        setTimeout(poll, pollInterval);
-                    } else {
-                        console.warn('Polling timeout: No scripts found after max attempts');
-                        showNotification('获取演讲稿超时，请手动刷新页面后查看', 'warning');
-                    }
-                } catch (error) {
-                    console.error('Polling error:', error);
-                    // 出错继续尝试
-                    if (attempts < maxAttempts) {
-                        setTimeout(poll, pollInterval);
-                    } else {
-                        showNotification('获取演讲稿失败，请刷新页面重试', 'error');
-                    }
-                }
-            };
-
-            // 开始轮询
-            poll();
-        }
-
         async function showCurrentSpeechScripts() {
             try {
                 // Close current dialog

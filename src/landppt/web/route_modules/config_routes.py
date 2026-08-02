@@ -78,6 +78,18 @@ def _coerce_bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+_REASONING_EFFORTS = {
+    "openai": {"none", "minimal", "low", "medium", "high", "xhigh", "max"},
+    "anthropic": {"low", "medium", "high", "xhigh", "max"},
+}
+
+
+def _normalize_reasoning_effort(provider: str, value: Any) -> str:
+    default = "high" if provider == "anthropic" else "medium"
+    normalized = str(value or default).strip().lower()
+    return normalized if normalized in _REASONING_EFFORTS.get(provider, set()) else default
+
+
 @router.get("/home", response_class=HTMLResponse)
 async def web_home(
     request: Request,
@@ -218,6 +230,8 @@ async def get_ai_providers_config(
         "anthropic_api_key": current_config.get("anthropic_api_key", ""),
         "anthropic_base_url": current_config.get("anthropic_base_url", ""),
         "anthropic_model": current_config.get("anthropic_model", ""),
+        "anthropic_enable_reasoning": current_config.get("anthropic_enable_reasoning", False),
+        "anthropic_reasoning_effort": current_config.get("anthropic_reasoning_effort", "high"),
         "google_api_key": current_config.get("google_api_key", ""),
         "google_base_url": current_config.get("google_base_url", ""),
         "google_model": current_config.get("google_model", ""),
@@ -611,10 +625,6 @@ async def test_provider_connection(
         else:
             config = await config_service.get_all_config(user_id=user.id)
 
-        def _normalize_reasoning_effort(value: Any) -> str:
-            normalized = str(value or "medium").strip().lower()
-            return normalized if normalized in {"none", "minimal", "low", "medium", "high", "xhigh"} else "medium"
-
         api_key = data.get('api_key') or config.get(f"{provider}_api_key", "")
         base_url = data.get('base_url') or config.get(f"{provider}_base_url", "")
         model = data.get('model') or config.get(f"{provider}_model", "")
@@ -626,12 +636,12 @@ async def test_provider_connection(
         enable_reasoning = (
             _coerce_bool(data.get("enable_reasoning"))
             if "enable_reasoning" in data
-            else _coerce_bool(config.get("openai_enable_reasoning"))
+            else _coerce_bool(config.get(f"{provider}_enable_reasoning"))
         )
         reasoning_effort = (
-            _normalize_reasoning_effort(data.get("reasoning_effort"))
+            _normalize_reasoning_effort(provider, data.get("reasoning_effort"))
             if "reasoning_effort" in data
-            else _normalize_reasoning_effort(config.get("openai_reasoning_effort"))
+            else _normalize_reasoning_effort(provider, config.get(f"{provider}_reasoning_effort"))
         )
 
         if not api_key:
@@ -731,7 +741,10 @@ async def test_provider_connection(
 
             if provider == "anthropic":
                 request_url = build_anthropic_messages_url(base_url)
-                payload = build_anthropic_test_payload("Hi")
+                payload = build_anthropic_test_payload(
+                    "Hi",
+                    reasoning_effort if enable_reasoning else "",
+                )
                 payload["model"] = model
                 logger.info("Testing %s connection at: %s (transport=anthropic_messages)", provider, request_url)
 
@@ -934,9 +947,7 @@ async def test_openai_provider_proxy(
         model = data.get('model', 'gpt-4o')
         use_responses_api = str(data.get("use_responses_api", "")).strip().lower() in {"1", "true", "yes", "on"}
         enable_reasoning = str(data.get("enable_reasoning", "")).strip().lower() in {"1", "true", "yes", "on"}
-        reasoning_effort = str(data.get("reasoning_effort") or "medium").strip().lower()
-        if reasoning_effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
-            reasoning_effort = "medium"
+        reasoning_effort = _normalize_reasoning_effort("openai", data.get("reasoning_effort"))
         
         logger.info(f"Frontend requested test with: base_url={base_url}, model={model}")
         
@@ -1060,6 +1071,8 @@ async def test_anthropic_provider_proxy(
         base_url = data.get('base_url', 'https://api.anthropic.com')
         api_key = data.get('api_key', '')
         model = data.get('model', 'claude-3-5-sonnet-20241022')
+        enable_reasoning = _coerce_bool(data.get("enable_reasoning"))
+        reasoning_effort = _normalize_reasoning_effort("anthropic", data.get("reasoning_effort"))
 
         logger.info(f"Frontend requested Anthropic test with: base_url={base_url}, model={model}")
 
@@ -1086,16 +1099,11 @@ async def test_anthropic_provider_proxy(
                 'anthropic-version': '2023-06-01'
             }
 
-            payload = {
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": "Say 'Hello, I am working!' in exactly 5 words."
-                    }
-                ],
-                "temperature": 0
-            }
+            payload = build_anthropic_test_payload(
+                "Say 'Hello, I am working!' in exactly 5 words.",
+                reasoning_effort if enable_reasoning else "",
+            )
+            payload["model"] = model
 
             async with session.post(
                 messages_url,

@@ -122,6 +122,8 @@ class RuntimeConfigService:
         elif provider == 'anthropic':
             api_key = user_config.get('anthropic_api_key')
             base_url = user_config.get('anthropic_base_url')
+            enable_reasoning = bool(user_config.get('anthropic_enable_reasoning'))
+            reasoning_effort = str(user_config.get('anthropic_reasoning_effort') or 'high')
         elif provider == 'google' or provider == 'gemini':
             api_key = user_config.get('google_api_key')
             base_url = user_config.get('google_base_url')

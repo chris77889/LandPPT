@@ -94,12 +94,15 @@ def build_anthropic_messages_url(base_url: str) -> str:
     return f"{normalize_anthropic_test_base_url(base_url)}/messages"
 
 
-def build_anthropic_test_payload(prompt: str) -> Dict[str, Any]:
+def build_anthropic_test_payload(prompt: str, reasoning_effort: str = "") -> Dict[str, Any]:
     """Anthropic 测试使用官方 messages 协议。"""
-    return {
+    payload = {
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
     }
+    if reasoning_effort:
+        payload["output_config"] = {"effort": reasoning_effort}
+    return payload
 
 
 def extract_anthropic_test_result(data: Dict[str, Any]) -> Tuple[str, Dict[str, int]]:
